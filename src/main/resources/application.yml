@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+svc:
+  user:
+    base-url: ${SVC_USER_BASE_URL}
+  competition:
+    base-url: ${SVC_COMPETITION_BASE_URL}
+  feedback:
+    base-url: ${SVC_FEEDBACK_BASE_URL}
+  chat:
+    base-url: ${SVC_CHAT_BASE_URL}
+  statistic:
+    base-url: ${SVC_STATISTIC_BASE_URL}
+  engine:
+    base-url: ${SVC_ENGINE_BASE_URL}
+
+spring:
+  main:
+    banner-mode: console
+  web:
+    resources:
+      add-mappings: false
+
+logging:
+  level:
+    org.studyplatform.bff: INFO
+    org.springframework.web.reactive.function.client: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
