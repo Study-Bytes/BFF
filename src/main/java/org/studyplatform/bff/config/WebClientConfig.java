@@ -31,6 +31,14 @@ public class WebClientConfig {
         return buildClient(builder, baseUrl);
     }
 
+    @Bean("learningWebClient")
+    public WebClient learningWebClient(
+            @Qualifier("webClientBuilder") WebClient.Builder builder,
+            @Value("${svc.learning.base-url}") String baseUrl
+    ) {
+        return buildClient(builder, baseUrl);
+    }
+
     private WebClient buildClient(WebClient.Builder builder, String baseUrl) {
         return builder.clone().baseUrl(baseUrl).build();
     }
