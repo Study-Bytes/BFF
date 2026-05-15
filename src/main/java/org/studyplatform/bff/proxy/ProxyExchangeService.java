@@ -1,18 +1,23 @@
 package org.studyplatform.bff.proxy;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.studyplatform.bff.exception.ApiErrorResponse;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.Set;
 
@@ -30,13 +35,23 @@ public class ProxyExchangeService {
             HttpHeaders.CONNECTION
     );
 
+    private final ObjectMapper objectMapper;
+
+    public ProxyExchangeService(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
     public ResponseEntity<byte[]> exchange(HttpServletRequest request, WebClient client, String upstreamUri) {
         byte[] requestBody;
         try {
             requestBody = readBody(request);
         } catch (IOException ex) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(("Cannot read body: " + ex.getMessage()).getBytes(StandardCharsets.UTF_8));
+            return errorResponse(
+                    HttpStatus.BAD_REQUEST,
+                    "REQUEST_BODY_READ_FAILED",
+                    "Cannot read request body",
+                    request.getRequestURI()
+            );
         }
 
         WebClient.RequestHeadersSpec<?> spec = client
@@ -51,8 +66,12 @@ public class ProxyExchangeService {
         return spec.exchangeToMono(response -> response.toEntity(byte[].class))
                 .map(this::withoutUnsafeResponseHeaders)
                 .timeout(Duration.ofSeconds(5))
-                .onErrorResume(ex -> Mono.just(ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                        .body(("Upstream error: " + ex.getMessage()).getBytes(StandardCharsets.UTF_8))))
+                .onErrorResume(ex -> Mono.just(errorResponse(
+                        HttpStatus.BAD_GATEWAY,
+                        "UPSTREAM_SERVICE_ERROR",
+                        "Upstream service is unavailable or returned an invalid response",
+                        request.getRequestURI()
+                )))
                 .block();
     }
 
@@ -76,14 +95,14 @@ public class ProxyExchangeService {
 
     private void copyRequestHeaders(HttpServletRequest request, HttpHeaders headers) {
         Collections.list(request.getHeaderNames()).stream()
-                .filter(name -> !SKIP_REQUEST_HEADERS.contains(name))
+                .filter(name -> !shouldSkipHeader(name, SKIP_REQUEST_HEADERS))
                 .forEach(name -> headers.addAll(name, Collections.list(request.getHeaders(name))));
     }
 
     private ResponseEntity<byte[]> withoutUnsafeResponseHeaders(ResponseEntity<byte[]> upstream) {
         HttpHeaders headers = new HttpHeaders();
         upstream.getHeaders().forEach((name, values) -> {
-            if (!SKIP_RESPONSE_HEADERS.contains(name)) {
+            if (!shouldSkipHeader(name, SKIP_RESPONSE_HEADERS)) {
                 headers.addAll(name, values);
             }
         });
@@ -98,5 +117,38 @@ public class ProxyExchangeService {
             case "GET", "HEAD", "OPTIONS", "TRACE" -> false;
             default -> true;
         };
+    }
+
+    private static boolean shouldSkipHeader(String headerName, Set<String> skippedHeaders) {
+        return skippedHeaders.stream().anyMatch(skipped -> skipped.equalsIgnoreCase(headerName));
+    }
+
+    private ResponseEntity<byte[]> errorResponse(
+            HttpStatus status,
+            String code,
+            String message,
+            String path
+    ) {
+        ApiErrorResponse error = new ApiErrorResponse(
+                Instant.now().toString(),
+                status.value(),
+                status.getReasonPhrase(),
+                code,
+                message,
+                path
+        );
+
+        return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(toJson(error));
+    }
+
+    private byte[] toJson(ApiErrorResponse error) {
+        try {
+            return objectMapper.writeValueAsBytes(error);
+        } catch (JsonProcessingException ex) {
+            return "{\"status\":500,\"error\":\"Internal Server Error\",\"code\":\"ERROR_SERIALIZATION_FAILED\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+        }
     }
 }

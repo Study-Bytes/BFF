@@ -37,11 +37,7 @@ class UserProxyIntegrationTest {
         String baseUrl = "http://localhost:" + upstream.getAddress().getPort();
 
         registry.add("svc.user.base-url", () -> baseUrl);
-        registry.add("svc.competition.base-url", () -> baseUrl);
-        registry.add("svc.feedback.base-url", () -> baseUrl);
-        registry.add("svc.chat.base-url", () -> baseUrl);
-        registry.add("svc.statistic.base-url", () -> baseUrl);
-        registry.add("svc.engine.base-url", () -> baseUrl);
+        registry.add("svc.course.base-url", () -> baseUrl);
     }
 
     @AfterAll
@@ -97,18 +93,6 @@ class UserProxyIntegrationTest {
     }
 
     @Test
-    void webProxyPreservesUpstreamStatusCode() {
-        ResponseEntity<String> response = restTemplate.getForEntity(
-                "/api/v1web/tournaments/status-check",
-                String.class
-        );
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.I_AM_A_TEAPOT);
-        assertThat(response.getBody()).contains("teapot");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/tournaments/status-check");
-    }
-
-    @Test
     void jwksEndpointIsProxiedSeparatelyFromGenericProxy() {
         ResponseEntity<String> response = restTemplate.getForEntity(
                 "/api/v1/auth/.well-known/jwks.json",
@@ -118,6 +102,65 @@ class UserProxyIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).contains("\"keys\"");
         assertThat(lastRequest.path()).isEqualTo("/api/v1/auth/.well-known/jwks.json");
+    }
+
+    @Test
+    void publicCourseCatalogIsForwardedToCourseService() {
+        ResponseEntity<String> response = restTemplate.getForEntity("/api/v1/courses", String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"courses\"");
+        assertThat(lastRequest.path()).isEqualTo("/api/v1/courses");
+    }
+
+    @Test
+    void adminCourseRequestForwardsAuthorizationHeaderToCourseService() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("teacher-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/courses",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"adminCourses\"");
+        assertThat(lastRequest.path()).isEqualTo("/api/v1/admin/courses");
+        assertThat(lastRequest.authorization()).isEqualTo("Bearer teacher-token");
+    }
+
+    @Test
+    void courseReadinessIsForwardedToCourseService() {
+        ResponseEntity<String> response = restTemplate.getForEntity("/course-service/ready", String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"status\":\"UP\"");
+        assertThat(lastRequest.path()).isEqualTo("/ready");
+    }
+
+    @Test
+    void internalCourseEndpointsAreNotExposedByBff() {
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                "/api/v1/internal/course-items/1/execution-package",
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void methodErrorsReturnStructuredJson() {
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/v1/courses",
+                HttpEntity.EMPTY,
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+        assertThat(response.getBody()).contains("\"code\":\"METHOD_NOT_ALLOWED\"");
+        assertThat(response.getBody()).contains("\"path\":\"/api/v1/courses\"");
     }
 
     private static void startUpstream() throws IOException {
@@ -149,12 +192,14 @@ class UserProxyIntegrationTest {
             response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\"}";
         } else if ("/health".equals(path)) {
             response = "{\"status\":\"UP\",\"service\":\"UserService\",\"timestamp\":\"2026-05-13T12:00:00Z\"}";
-        } else if ("/api/v1web/tournaments/status-check".equals(path)
-                || "/api/v1/tournaments/status-check".equals(path)) {
-            status = 418;
-            response = "{\"error\":\"teapot\"}";
         } else if ("/api/v1/auth/.well-known/jwks.json".equals(path)) {
             response = "{\"keys\":[]}";
+        } else if ("/api/v1/courses".equals(path)) {
+            response = "{\"courses\":[]}";
+        } else if ("/api/v1/admin/courses".equals(path)) {
+            response = "{\"adminCourses\":[]}";
+        } else if ("/ready".equals(path)) {
+            response = "{\"status\":\"UP\"}";
         }
 
         byte[] bytes = response.getBytes(StandardCharsets.UTF_8);

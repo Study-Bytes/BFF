@@ -23,42 +23,10 @@ public class WebClientConfig {
         return buildClient(builder, baseUrl);
     }
 
-    @Bean("competitionWebClient")
-    public WebClient competitionWebClient(
+    @Bean("courseWebClient")
+    public WebClient courseWebClient(
             @Qualifier("webClientBuilder") WebClient.Builder builder,
-            @Value("${svc.competition.base-url}") String baseUrl
-    ) {
-        return buildClient(builder, baseUrl);
-    }
-
-    @Bean("feedbackWebClient")
-    public WebClient feedbackWebClient(
-            @Qualifier("webClientBuilder") WebClient.Builder builder,
-            @Value("${svc.feedback.base-url}") String baseUrl
-    ) {
-        return buildClient(builder, baseUrl);
-    }
-
-    @Bean("chatWebClient")
-    public WebClient chatWebClient(
-            @Qualifier("webClientBuilder") WebClient.Builder builder,
-            @Value("${svc.chat.base-url}") String baseUrl
-    ) {
-        return buildClient(builder, baseUrl);
-    }
-
-    @Bean("engineWebClient")
-    public WebClient engineWebClient(
-            @Qualifier("webClientBuilder") WebClient.Builder builder,
-            @Value("${svc.engine.base-url}") String baseUrl
-    ) {
-        return buildClient(builder, baseUrl);
-    }
-
-    @Bean("statisticWebClient")
-    public WebClient statisticWebClient(
-            @Qualifier("webClientBuilder") WebClient.Builder builder,
-            @Value("${svc.statistic.base-url}") String baseUrl
+            @Value("${svc.course.base-url}") String baseUrl
     ) {
         return buildClient(builder, baseUrl);
     }
