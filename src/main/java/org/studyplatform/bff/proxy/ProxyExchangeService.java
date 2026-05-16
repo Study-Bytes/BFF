@@ -86,6 +86,20 @@ public class ProxyExchangeService {
         return request.getRequestURI() + query;
     }
 
+    public String buildCurrentUserUri(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        String upstreamPath;
+        if ("/api/v1/me".equals(path)) {
+            upstreamPath = "/api/v1/users/me";
+        } else if (path.startsWith("/api/v1/me/")) {
+            upstreamPath = "/api/v1/users/me" + path.substring("/api/v1/me".length());
+        } else {
+            upstreamPath = path;
+        }
+        String query = request.getQueryString() == null ? "" : "?" + request.getQueryString();
+        return upstreamPath + query;
+    }
+
     private byte[] readBody(HttpServletRequest request) throws IOException {
         if (request.getContentLengthLong() == 0) {
             return new byte[0];

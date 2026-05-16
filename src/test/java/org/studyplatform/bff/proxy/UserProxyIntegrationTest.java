@@ -71,7 +71,7 @@ class UserProxyIntegrationTest {
         headers.setBearerAuth("access-token");
 
         ResponseEntity<String> response = restTemplate.exchange(
-                "/api/v1/users/me",
+                "/api/v1/me",
                 HttpMethod.GET,
                 new HttpEntity<>(headers),
                 String.class
@@ -80,6 +80,71 @@ class UserProxyIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).contains("\"role\":\"STUDENT\"");
         assertThat(lastRequest.path()).isEqualTo("/api/v1/users/me");
+        assertThat(lastRequest.authorization()).isEqualTo("Bearer access-token");
+    }
+
+    @Test
+    void legacyUserMeRouteStillForwardsToUserService() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/users/me",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest.path()).isEqualTo("/api/v1/users/me");
+    }
+
+    @Test
+    void profileUpdateMapsSiteRouteToUserServiceRoute() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(
+                "{\"fullName\":\"Updated User\",\"avatarUrl\":\"https://example.com/a.png\",\"bio\":\"Java student\"}",
+                headers
+        );
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/profile",
+                HttpMethod.PUT,
+                request,
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"fullName\":\"Updated User\"");
+        assertThat(lastRequest.method()).isEqualTo("PUT");
+        assertThat(lastRequest.path()).isEqualTo("/api/v1/users/me/profile");
+        assertThat(lastRequest.body()).contains("Java student");
+        assertThat(lastRequest.authorization()).isEqualTo("Bearer access-token");
+    }
+
+    @Test
+    void passwordChangeMapsSiteRouteToUserServiceRoute() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(
+                "{\"currentPassword\":\"old-password\",\"newPassword\":\"new-password\"}",
+                headers
+        );
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/password",
+                HttpMethod.PUT,
+                request,
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(lastRequest.method()).isEqualTo("PUT");
+        assertThat(lastRequest.path()).isEqualTo("/api/v1/users/me/password");
+        assertThat(lastRequest.body()).contains("new-password");
         assertThat(lastRequest.authorization()).isEqualTo("Bearer access-token");
     }
 
@@ -187,9 +252,14 @@ class UserProxyIntegrationTest {
         String response = "{\"path\":\"" + path + "\"}";
 
         if ("/api/v1/auth/login".equals(path)) {
-            response = "{\"accessToken\":\"token\",\"refreshToken\":\"refresh\",\"tokenType\":\"Bearer\",\"expiresIn\":900}";
+            response = "{\"user\":{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null},\"accessToken\":\"token\",\"refreshToken\":\"refresh\",\"tokenType\":\"Bearer\",\"expiresIn\":900}";
         } else if ("/api/v1/users/me".equals(path)) {
-            response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\"}";
+            response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null}";
+        } else if ("/api/v1/users/me/profile".equals(path)) {
+            response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Updated User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":\"https://example.com/a.png\",\"bio\":\"Java student\"}";
+        } else if ("/api/v1/users/me/password".equals(path)) {
+            status = 204;
+            response = "";
         } else if ("/health".equals(path)) {
             response = "{\"status\":\"UP\",\"service\":\"UserService\",\"timestamp\":\"2026-05-13T12:00:00Z\"}";
         } else if ("/api/v1/auth/.well-known/jwks.json".equals(path)) {
