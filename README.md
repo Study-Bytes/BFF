@@ -58,6 +58,31 @@ Teacher request endpoints:
 - `POST /api/v1/admin/teacher-requests/{requestId}/approve`
 - `POST /api/v1/admin/teacher-requests/{requestId}/reject`
 
+Teacher course-authoring endpoints:
+- `GET /api/v1/teacher/courses`
+- `POST /api/v1/teacher/courses`
+- `GET /api/v1/teacher/courses/{courseId}`
+- `PUT /api/v1/teacher/courses/{courseId}`
+- `POST /api/v1/teacher/courses/{courseId}/publish`
+- `POST /api/v1/teacher/courses/{courseId}/archive`
+- `POST /api/v1/teacher/courses/{courseId}/modules`
+- `PUT /api/v1/teacher/courses/{courseId}/modules/reorder`
+- `PUT /api/v1/teacher/modules/{moduleId}`
+- `DELETE /api/v1/teacher/modules/{moduleId}`
+- `POST /api/v1/teacher/modules/{moduleId}/items`
+- `PUT /api/v1/teacher/modules/{moduleId}/items/reorder`
+- `GET /api/v1/teacher/items/{itemId}`
+- `PUT /api/v1/teacher/items/{itemId}`
+- `DELETE /api/v1/teacher/items/{itemId}`
+- `PUT /api/v1/teacher/items/{itemId}/content-blocks`
+- `PUT /api/v1/teacher/items/{itemId}/hints`
+- `PUT /api/v1/teacher/items/{itemId}/test-cases`
+- `PUT /api/v1/teacher/items/{itemId}/options`
+
+These routes are proxied by BFF to CourseService admin endpoints (`/api/v1/admin/**` and
+`/api/v1/admin/course-items/**` for item routes). Ownership/list filtering remains in CourseService:
+`ADMIN` can list all courses, `TEACHER` can list only own courses where `createdByUserId == JWT.sub`.
+
 Internal UserService paths such as `/api/v1/users/*` are not exposed by the BFF.
 
 ## Auth mode (production)
