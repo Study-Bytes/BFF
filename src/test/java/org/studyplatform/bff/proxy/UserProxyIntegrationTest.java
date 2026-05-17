@@ -219,6 +219,60 @@ class UserProxyIntegrationTest {
     }
 
     @Test
+    void teacherCoursesListIsForwardedToAdminCoursesWithoutBffFiltering() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/teacher/courses?status=DRAFT&page=0&size=20",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo("GET");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/courses");
+        assertThat(lastRequest().query()).isEqualTo("status=DRAFT&page=0&size=20");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
+    }
+
+    @Test
+    void teacherItemEndpointsMapToAdminCourseItemsAndKeepBody() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+
+        ResponseEntity<String> itemResponse = restTemplate.exchange(
+                "/api/v1/teacher/items/42",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(itemResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo("GET");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/course-items/42");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
+
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String payload = """
+                [{"type":"TEXT","content":"intro","orderIndex":0}]
+                """;
+        ResponseEntity<String> contentBlocksResponse = restTemplate.exchange(
+                "/api/v1/teacher/items/42/content-blocks",
+                HttpMethod.PUT,
+                new HttpEntity<>(payload, headers),
+                String.class
+        );
+
+        assertThat(contentBlocksResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo("PUT");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/course-items/42/content-blocks");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
+        assertThat(lastRequest().body()).isEqualTo(payload);
+    }
+
+    @Test
     void defaultLocaleResolvesFromAccountSettingThenAcceptLanguageThenFallback() {
         HttpHeaders authHeaders = new HttpHeaders();
         authHeaders.setBearerAuth("access-token");
