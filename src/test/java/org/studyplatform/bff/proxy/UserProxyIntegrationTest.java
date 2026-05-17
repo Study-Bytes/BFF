@@ -238,6 +238,24 @@ class UserProxyIntegrationTest {
     }
 
     @Test
+    void teacherCourseProxyPrefersAccessCookieWhenAuthorizationIsNotJwt() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.AUTHORIZATION, "Bearer token");
+        headers.add(HttpHeaders.COOKIE, "access_token=header.payload.signature");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/teacher/courses",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/courses");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer header.payload.signature");
+    }
+
+    @Test
     void teacherItemEndpointsMapToAdminCourseItemsAndKeepBody() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("access-token");
