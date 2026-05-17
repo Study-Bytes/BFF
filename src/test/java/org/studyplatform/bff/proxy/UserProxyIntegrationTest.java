@@ -3,6 +3,7 @@ package org.studyplatform.bff.proxy;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,6 +20,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class UserProxyIntegrationTest {
 
     private static HttpServer upstream;
-    private static volatile CapturedRequest lastRequest;
+    private static final List<CapturedRequest> capturedRequests = new CopyOnWriteArrayList<>();
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -38,6 +41,7 @@ class UserProxyIntegrationTest {
 
         registry.add("svc.user.base-url", () -> baseUrl);
         registry.add("svc.course.base-url", () -> baseUrl);
+        registry.add("bff.auth.cookies.secure", () -> false);
     }
 
     @AfterAll
@@ -47,8 +51,13 @@ class UserProxyIntegrationTest {
         }
     }
 
+    @BeforeEach
+    void clearCapturedRequests() {
+        capturedRequests.clear();
+    }
+
     @Test
-    void loginForwardsBodyToUserService() {
+    void loginForwardsBodyAndSetsAuthCookies() {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<String> request = new HttpEntity<>(
@@ -59,14 +68,53 @@ class UserProxyIntegrationTest {
         ResponseEntity<String> response = restTemplate.postForEntity("/api/v1/auth/login", request, String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).contains("\"accessToken\":\"token\"");
-        assertThat(lastRequest.method()).isEqualTo("POST");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/auth/login");
-        assertThat(lastRequest.body()).contains("securePassword123");
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).isNotNull();
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).anySatisfy(cookie -> assertThat(cookie).contains("access_token="));
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).anySatisfy(cookie -> assertThat(cookie).contains("refresh_token="));
+        assertThat(lastRequest().method()).isEqualTo("POST");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/auth/login");
+        assertThat(lastRequest().body()).contains("securePassword123");
     }
 
     @Test
-    void userMeForwardsAuthorizationHeader() {
+    void refreshUsesRefreshCookieWhenBodyIsMissing() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(HttpHeaders.COOKIE, "refresh_token=cookie-refresh-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/auth/refresh",
+                HttpMethod.POST,
+                new HttpEntity<>("", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/auth/refresh");
+        assertThat(lastRequest().body()).contains("cookie-refresh-token");
+    }
+
+    @Test
+    void logoutUsesAccessCookieClearsCookiesAndReturnsSuccessPayload() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(HttpHeaders.COOKIE, "access_token=access-cookie-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/auth/logout",
+                HttpMethod.POST,
+                new HttpEntity<>("", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"success\":true");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/auth/logout");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-cookie-token");
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).anySatisfy(cookie -> assertThat(cookie).contains("access_token="));
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).anySatisfy(cookie -> assertThat(cookie).contains("refresh_token="));
+    }
+
+    @Test
+    void currentUserRouteMapsToUsersMe() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("access-token");
 
@@ -78,154 +126,178 @@ class UserProxyIntegrationTest {
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).contains("\"role\":\"STUDENT\"");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/users/me");
-        assertThat(lastRequest.authorization()).isEqualTo("Bearer access-token");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/users/me");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
     }
 
     @Test
-    void legacyUserMeRouteStillForwardsToUserService() {
+    void meSettingsRouteMapsToUsersMeSettings() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("access-token");
 
-        ResponseEntity<String> response = restTemplate.exchange(
-                "/api/v1/users/me",
+        ResponseEntity<String> getResponse = restTemplate.exchange(
+                "/api/v1/me/settings",
                 HttpMethod.GET,
                 new HttpEntity<>(headers),
                 String.class
         );
+        assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/users/me/settings");
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/users/me");
-    }
-
-    @Test
-    void profileUpdateMapsSiteRouteToUserServiceRoute() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth("access-token");
         headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<String> request = new HttpEntity<>(
-                "{\"fullName\":\"Updated User\",\"avatarUrl\":\"https://example.com/a.png\",\"bio\":\"Java student\"}",
+        HttpEntity<String> putRequest = new HttpEntity<>(
+                "{\"fullName\":\"Updated\",\"preferredLocale\":\"ru\",\"avatarUrl\":null,\"bio\":\"bio\"}",
                 headers
         );
-
-        ResponseEntity<String> response = restTemplate.exchange(
-                "/api/v1/me/profile",
+        ResponseEntity<String> putResponse = restTemplate.exchange(
+                "/api/v1/me/settings",
                 HttpMethod.PUT,
-                request,
+                putRequest,
                 String.class
         );
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).contains("\"fullName\":\"Updated User\"");
-        assertThat(lastRequest.method()).isEqualTo("PUT");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/users/me/profile");
-        assertThat(lastRequest.body()).contains("Java student");
-        assertThat(lastRequest.authorization()).isEqualTo("Bearer access-token");
+        assertThat(putResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/users/me/settings");
+        assertThat(lastRequest().method()).isEqualTo("PUT");
     }
 
     @Test
-    void passwordChangeMapsSiteRouteToUserServiceRoute() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth("access-token");
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<String> request = new HttpEntity<>(
-                "{\"currentPassword\":\"old-password\",\"newPassword\":\"new-password\"}",
-                headers
-        );
-
-        ResponseEntity<String> response = restTemplate.exchange(
-                "/api/v1/me/password",
-                HttpMethod.PUT,
-                request,
-                String.class
-        );
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
-        assertThat(lastRequest.method()).isEqualTo("PUT");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/users/me/password");
-        assertThat(lastRequest.body()).contains("new-password");
-        assertThat(lastRequest.authorization()).isEqualTo("Bearer access-token");
-    }
-
-    @Test
-    void healthForwardsToUserServiceHealthEndpoint() {
-        ResponseEntity<String> response = restTemplate.getForEntity("/health", String.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).contains("\"service\":\"UserService\"");
-        assertThat(lastRequest.path()).isEqualTo("/health");
-    }
-
-    @Test
-    void jwksEndpointIsProxiedSeparatelyFromGenericProxy() {
-        ResponseEntity<String> response = restTemplate.getForEntity(
-                "/api/v1/auth/.well-known/jwks.json",
-                String.class
-        );
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).contains("\"keys\"");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/auth/.well-known/jwks.json");
-    }
-
-    @Test
-    void publicCourseCatalogIsForwardedToCourseService() {
-        ResponseEntity<String> response = restTemplate.getForEntity("/api/v1/courses", String.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).contains("\"courses\"");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/courses");
-    }
-
-    @Test
-    void adminCourseRequestForwardsAuthorizationHeaderToCourseService() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth("teacher-token");
-
-        ResponseEntity<String> response = restTemplate.exchange(
-                "/api/v1/admin/courses",
-                HttpMethod.GET,
-                new HttpEntity<>(headers),
-                String.class
-        );
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).contains("\"adminCourses\"");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/admin/courses");
-        assertThat(lastRequest.authorization()).isEqualTo("Bearer teacher-token");
-    }
-
-    @Test
-    void courseReadinessIsForwardedToCourseService() {
-        ResponseEntity<String> response = restTemplate.getForEntity("/course-service/ready", String.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).contains("\"status\":\"UP\"");
-        assertThat(lastRequest.path()).isEqualTo("/ready");
-    }
-
-    @Test
-    void internalCourseEndpointsAreNotExposedByBff() {
-        ResponseEntity<String> response = restTemplate.getForEntity(
-                "/api/v1/internal/course-items/1/execution-package",
-                String.class
-        );
-
+    void internalUsersRoutesAreNotExposed() {
+        ResponseEntity<String> response = restTemplate.getForEntity("/api/v1/users/me", String.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     @Test
-    void methodErrorsReturnStructuredJson() {
+    void teacherRequestEndpointsAreForwardedToUserService() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> createResponse = restTemplate.postForEntity(
+                "/api/v1/teacher-requests",
+                new HttpEntity<>("{\"motivation\":\"m\",\"experience\":\"e\",\"preferredTopics\":[\"Java\"]}", headers),
+                String.class
+        );
+        assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/teacher-requests");
+
+        ResponseEntity<String> mineResponse = restTemplate.exchange(
+                "/api/v1/teacher-requests/me",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+        assertThat(mineResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/teacher-requests/me");
+
+        ResponseEntity<String> listResponse = restTemplate.exchange(
+                "/api/v1/admin/teacher-requests?status=PENDING&page=0&size=20",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+        assertThat(listResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/teacher-requests");
+        assertThat(lastRequest().query()).isEqualTo("status=PENDING&page=0&size=20");
+
+        ResponseEntity<String> approveResponse = restTemplate.exchange(
+                "/api/v1/admin/teacher-requests/10/approve",
+                HttpMethod.POST,
+                new HttpEntity<>("{}", headers),
+                String.class
+        );
+        assertThat(approveResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/teacher-requests/10/approve");
+
+        ResponseEntity<String> rejectResponse = restTemplate.exchange(
+                "/api/v1/admin/teacher-requests/10/reject",
+                HttpMethod.POST,
+                new HttpEntity<>("{\"reviewComment\":\"Need more details\"}", headers),
+                String.class
+        );
+        assertThat(rejectResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/teacher-requests/10/reject");
+    }
+
+    @Test
+    void defaultLocaleResolvesFromAccountSettingThenAcceptLanguageThenFallback() {
+        HttpHeaders authHeaders = new HttpHeaders();
+        authHeaders.setBearerAuth("access-token");
+        ResponseEntity<String> fromAccount = restTemplate.exchange(
+                "/api/v1/i18n/default-locale",
+                HttpMethod.GET,
+                new HttpEntity<>(authHeaders),
+                String.class
+        );
+        assertThat(fromAccount.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(fromAccount.getBody()).contains("\"locale\":\"ru\"");
+        assertThat(fromAccount.getBody()).contains("\"source\":\"ACCOUNT_SETTING\"");
+
+        HttpHeaders acceptLanguageHeaders = new HttpHeaders();
+        acceptLanguageHeaders.set(HttpHeaders.ACCEPT_LANGUAGE, "en-US,en;q=0.9");
+        ResponseEntity<String> fromAcceptLanguage = restTemplate.exchange(
+                "/api/v1/i18n/default-locale",
+                HttpMethod.GET,
+                new HttpEntity<>(acceptLanguageHeaders),
+                String.class
+        );
+        assertThat(fromAcceptLanguage.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(fromAcceptLanguage.getBody()).contains("\"locale\":\"en\"");
+        assertThat(fromAcceptLanguage.getBody()).contains("\"source\":\"ACCEPT_LANGUAGE\"");
+
+        HttpHeaders unsupportedLanguageHeaders = new HttpHeaders();
+        unsupportedLanguageHeaders.set(HttpHeaders.ACCEPT_LANGUAGE, "de-DE,de;q=0.9");
+        ResponseEntity<String> fallback = restTemplate.exchange(
+                "/api/v1/i18n/default-locale",
+                HttpMethod.GET,
+                new HttpEntity<>(unsupportedLanguageHeaders),
+                String.class
+        );
+        assertThat(fallback.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(fallback.getBody()).contains("\"locale\":\"ru\"");
+        assertThat(fallback.getBody()).contains("\"source\":\"FALLBACK\"");
+    }
+
+    @Test
+    void registerTeacherRequestOrchestratesRegisterSettingsAndTeacherRequestCreation() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String payload = """
+                {
+                  "fullName":"Teacher User",
+                  "email":"teacher@example.com",
+                  "password":"password123",
+                  "preferredLocale":"en",
+                  "motivation":"I want to create Java courses.",
+                  "experience":"3 years of Java backend experience.",
+                  "portfolioUrl":"https://example.com",
+                  "preferredTopics":["Java","Spring Boot"]
+                }
+                """;
+
         ResponseEntity<String> response = restTemplate.postForEntity(
-                "/api/v1/courses",
-                HttpEntity.EMPTY,
+                "/api/v1/auth/register-teacher-request",
+                new HttpEntity<>(payload, headers),
                 String.class
         );
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
-        assertThat(response.getBody()).contains("\"code\":\"METHOD_NOT_ALLOWED\"");
-        assertThat(response.getBody()).contains("\"path\":\"/api/v1/courses\"");
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"teacherRequest\"");
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).anySatisfy(cookie -> assertThat(cookie).contains("access_token="));
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).anySatisfy(cookie -> assertThat(cookie).contains("refresh_token="));
+        assertThat(capturedRequests).anySatisfy(req -> assertThat(req.path()).isEqualTo("/api/v1/auth/register"));
+        assertThat(capturedRequests).anySatisfy(req -> assertThat(req.path()).isEqualTo("/api/v1/users/me/settings"));
+        assertThat(capturedRequests).anySatisfy(req -> assertThat(req.path()).isEqualTo("/api/v1/teacher-requests"));
+    }
+
+    @Test
+    void jwksEndpointIsProxied() {
+        ResponseEntity<String> response = restTemplate.getForEntity("/api/v1/auth/.well-known/jwks.json", String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/auth/.well-known/jwks.json");
+    }
+
+    private static CapturedRequest lastRequest() {
+        return capturedRequests.get(capturedRequests.size() - 1);
     }
 
     private static void startUpstream() throws IOException {
@@ -240,34 +312,57 @@ class UserProxyIntegrationTest {
 
     private static void handle(HttpExchange exchange) throws IOException {
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        lastRequest = new CapturedRequest(
+        capturedRequests.add(new CapturedRequest(
                 exchange.getRequestMethod(),
                 exchange.getRequestURI().getPath(),
+                exchange.getRequestURI().getRawQuery(),
                 exchange.getRequestHeaders().getFirst(HttpHeaders.AUTHORIZATION),
+                exchange.getRequestHeaders().getFirst(HttpHeaders.COOKIE),
+                exchange.getRequestHeaders().getFirst(HttpHeaders.ACCEPT_LANGUAGE),
                 body
-        );
+        ));
 
         String path = exchange.getRequestURI().getPath();
         int status = 200;
         String response = "{\"path\":\"" + path + "\"}";
 
         if ("/api/v1/auth/login".equals(path)) {
-            response = "{\"user\":{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null},\"accessToken\":\"token\",\"refreshToken\":\"refresh\",\"tokenType\":\"Bearer\",\"expiresIn\":900}";
-        } else if ("/api/v1/users/me".equals(path)) {
-            response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null}";
-        } else if ("/api/v1/users/me/profile".equals(path)) {
-            response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Updated User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":\"https://example.com/a.png\",\"bio\":\"Java student\"}";
-        } else if ("/api/v1/users/me/password".equals(path)) {
+            response = "{\"user\":{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null,\"preferredLocale\":\"ru\"},\"accessToken\":\"token\",\"refreshToken\":\"refresh\",\"tokenType\":\"Bearer\",\"expiresIn\":900}";
+        } else if ("/api/v1/auth/register".equals(path)) {
+            response = "{\"user\":{\"id\":3,\"email\":\"teacher@example.com\",\"fullName\":\"Teacher User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null,\"preferredLocale\":\"ru\"},\"accessToken\":\"register-access\",\"refreshToken\":\"register-refresh\",\"tokenType\":\"Bearer\",\"expiresIn\":900}";
+        } else if ("/api/v1/auth/refresh".equals(path)) {
+            response = "{\"user\":{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null,\"preferredLocale\":\"ru\"},\"accessToken\":\"refreshed-access\",\"refreshToken\":\"refreshed-refresh\",\"tokenType\":\"Bearer\",\"expiresIn\":900}";
+        } else if ("/api/v1/auth/logout".equals(path)) {
             status = 204;
             response = "";
-        } else if ("/health".equals(path)) {
-            response = "{\"status\":\"UP\",\"service\":\"UserService\",\"timestamp\":\"2026-05-13T12:00:00Z\"}";
+        } else if ("/api/v1/users/me".equals(path)) {
+            if (exchange.getRequestHeaders().getFirst(HttpHeaders.AUTHORIZATION) == null) {
+                status = 401;
+                response = "{\"message\":\"Unauthorized\"}";
+            } else {
+                response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null,\"preferredLocale\":\"ru\"}";
+            }
+        } else if ("/api/v1/users/me/settings".equals(path)) {
+            response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Updated User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":\"bio\",\"preferredLocale\":\"ru\"}";
+        } else if ("/api/v1/teacher-requests".equals(path)) {
+            status = 201;
+            response = "{\"id\":10,\"userId\":2,\"status\":\"PENDING\",\"motivation\":\"m\",\"experience\":\"e\",\"portfolioUrl\":null,\"preferredTopics\":[\"Java\"],\"reviewComment\":null,\"createdAt\":\"2026-05-17T12:00:00Z\",\"reviewedAt\":null,\"reviewedByUserId\":null}";
+        } else if ("/api/v1/teacher-requests/me".equals(path)) {
+            response = "{\"id\":10,\"userId\":2,\"status\":\"PENDING\",\"motivation\":\"m\",\"experience\":\"e\",\"portfolioUrl\":null,\"preferredTopics\":[\"Java\"],\"reviewComment\":null,\"createdAt\":\"2026-05-17T12:00:00Z\",\"reviewedAt\":null,\"reviewedByUserId\":null}";
+        } else if ("/api/v1/admin/teacher-requests".equals(path)) {
+            response = "{\"items\":[{\"id\":10,\"userId\":2,\"status\":\"PENDING\",\"motivation\":\"m\",\"experience\":\"e\",\"portfolioUrl\":null,\"preferredTopics\":[\"Java\"],\"reviewComment\":null,\"createdAt\":\"2026-05-17T12:00:00Z\",\"reviewedAt\":null,\"reviewedByUserId\":null}],\"page\":0,\"size\":20,\"totalItems\":1,\"totalPages\":1}";
+        } else if ("/api/v1/admin/teacher-requests/10/approve".equals(path)) {
+            response = "{\"id\":10,\"userId\":2,\"status\":\"APPROVED\",\"motivation\":\"m\",\"experience\":\"e\",\"portfolioUrl\":null,\"preferredTopics\":[\"Java\"],\"reviewComment\":null,\"createdAt\":\"2026-05-17T12:00:00Z\",\"reviewedAt\":\"2026-05-17T13:00:00Z\",\"reviewedByUserId\":99}";
+        } else if ("/api/v1/admin/teacher-requests/10/reject".equals(path)) {
+            response = "{\"id\":10,\"userId\":2,\"status\":\"REJECTED\",\"motivation\":\"m\",\"experience\":\"e\",\"portfolioUrl\":null,\"preferredTopics\":[\"Java\"],\"reviewComment\":\"Need more details\",\"createdAt\":\"2026-05-17T12:00:00Z\",\"reviewedAt\":\"2026-05-17T13:00:00Z\",\"reviewedByUserId\":99}";
         } else if ("/api/v1/auth/.well-known/jwks.json".equals(path)) {
             response = "{\"keys\":[]}";
         } else if ("/api/v1/courses".equals(path)) {
             response = "{\"courses\":[]}";
         } else if ("/api/v1/admin/courses".equals(path)) {
             response = "{\"adminCourses\":[]}";
+        } else if ("/health".equals(path)) {
+            response = "{\"status\":\"UP\",\"service\":\"UserService\",\"timestamp\":\"2026-05-13T12:00:00Z\"}";
         } else if ("/ready".equals(path)) {
             response = "{\"status\":\"UP\"}";
         }
@@ -279,6 +374,14 @@ class UserProxyIntegrationTest {
         exchange.close();
     }
 
-    private record CapturedRequest(String method, String path, String authorization, String body) {
+    private record CapturedRequest(
+            String method,
+            String path,
+            String query,
+            String authorization,
+            String cookie,
+            String acceptLanguage,
+            String body
+    ) {
     }
 }

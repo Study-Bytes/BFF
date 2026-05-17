@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.Instant;
+import java.util.UUID;
 
 @Order(Ordered.HIGHEST_PRECEDENCE)
 @RestControllerAdvice(basePackages = "org.studyplatform.bff")
@@ -22,7 +22,7 @@ public class GlobalErrorHandler {
             HttpServletRequest request
     ) {
         HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
-        return buildError(status, "BFF_REQUEST_ERROR", ex.getReason(), request.getRequestURI());
+        return buildError(status, ex.getReason(), request);
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
@@ -30,39 +30,30 @@ public class GlobalErrorHandler {
             HttpRequestMethodNotSupportedException ex,
             HttpServletRequest request
     ) {
-        return buildError(
-                HttpStatus.METHOD_NOT_ALLOWED,
-                "METHOD_NOT_ALLOWED",
-                ex.getMessage(),
-                request.getRequestURI()
-        );
+        return buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiErrorResponse> handleUnexpectedException(Exception ex, HttpServletRequest request) {
-        return buildError(
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                "INTERNAL_SERVER_ERROR",
-                "Unexpected BFF error",
-                request.getRequestURI()
-        );
+        return buildError(HttpStatus.INTERNAL_SERVER_ERROR, "Unexpected BFF error", request);
     }
 
-    private ResponseEntity<ApiErrorResponse> buildError(
-            HttpStatus status,
-            String code,
-            String message,
-            String path
-    ) {
+    private ResponseEntity<ApiErrorResponse> buildError(HttpStatus status, String message, HttpServletRequest request) {
+        String requestId = resolveRequestId(request.getHeader("X-Request-Id"));
         return ResponseEntity.status(status)
                 .body(new ApiErrorResponse(
-                        Instant.now().toString(),
                         status.value(),
-                        status.getReasonPhrase(),
-                        code,
+                        ErrorCodeMapper.codeFor(status.value()),
                         message,
-                        path
+                        requestId,
+                        null
                 ));
     }
 
+    private String resolveRequestId(String headerValue) {
+        if (headerValue != null && !headerValue.isBlank()) {
+            return headerValue;
+        }
+        return UUID.randomUUID().toString();
+    }
 }

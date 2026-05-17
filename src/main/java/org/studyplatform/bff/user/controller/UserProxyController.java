@@ -5,7 +5,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -45,21 +44,21 @@ public class UserProxyController {
         );
     }
 
-    @GetMapping("/users/me")
-    public ResponseEntity<byte[]> me(HttpServletRequest request) {
+    @GetMapping("/me/settings")
+    public ResponseEntity<byte[]> currentUserSettings(HttpServletRequest request) {
         return proxyExchangeService.exchange(
                 request,
                 userWebClient,
-                proxyExchangeService.buildAuthOrUsersUri(request)
+                proxyExchangeService.buildCurrentUserUri(request)
         );
     }
 
-    @GetMapping("/users/{id}")
-    public ResponseEntity<byte[]> getById(@PathVariable String id, HttpServletRequest request) {
+    @PutMapping("/me/settings")
+    public ResponseEntity<byte[]> updateCurrentUserSettings(HttpServletRequest request) {
         return proxyExchangeService.exchange(
                 request,
                 userWebClient,
-                proxyExchangeService.buildAuthOrUsersUri(request)
+                proxyExchangeService.buildCurrentUserUri(request)
         );
     }
 }

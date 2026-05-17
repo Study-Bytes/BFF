@@ -32,3 +32,63 @@ BFF environment variables:
 - `SVC_COURSE_BASE_URL` - CourseService URL, default `http://course-service:8082`;
 - `SVC_LEARNING_BASE_URL` - LearningService URL, default `http://learning-service:8090`;
 - `BACKEND_NETWORK` - shared Docker network, default `studybytes_backend_net`.
+
+## Site-facing API
+
+External frontend API is exposed only under `/api/v1`.
+
+User/account/auth endpoints:
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/register-teacher-request`
+- `POST /api/v1/auth/logout`
+- `POST /api/v1/auth/refresh`
+- `GET /api/v1/auth/csrf`
+- `GET /api/v1/me`
+- `GET /api/v1/me/settings`
+- `PUT /api/v1/me/settings`
+- `PUT /api/v1/me/profile`
+- `PUT /api/v1/me/password`
+- `GET /api/v1/i18n/default-locale`
+
+Teacher request endpoints:
+- `POST /api/v1/teacher-requests`
+- `GET /api/v1/teacher-requests/me`
+- `GET /api/v1/admin/teacher-requests`
+- `POST /api/v1/admin/teacher-requests/{requestId}/approve`
+- `POST /api/v1/admin/teacher-requests/{requestId}/reject`
+
+Internal UserService paths such as `/api/v1/users/*` are not exposed by the BFF.
+
+## Auth mode (production)
+
+Preferred mode is BFF-managed httpOnly cookies:
+- BFF reads token fields from auth responses and sets `access_token` + `refresh_token` cookies.
+- Site should use `credentials: include`.
+- `POST /api/v1/auth/refresh` can use refresh token from cookie when request body does not contain `refreshToken`.
+- `POST /api/v1/auth/logout` clears auth cookies at BFF level.
+- Token fields in JSON are still forwarded for MVP compatibility.
+
+Cookie configuration environment variables:
+- `BFF_AUTH_ACCESS_COOKIE_NAME` (default `access_token`)
+- `BFF_AUTH_REFRESH_COOKIE_NAME` (default `refresh_token`)
+- `BFF_AUTH_COOKIE_SECURE` (default `true`)
+- `BFF_AUTH_COOKIE_SAME_SITE` (default `Lax`)
+- `BFF_AUTH_COOKIE_PATH` (default `/`)
+- `BFF_AUTH_COOKIE_DOMAIN` (optional)
+
+## Error format
+
+BFF normalizes errors to:
+
+```json
+{
+  "status": 400,
+  "code": "VALIDATION_ERROR",
+  "message": "Validation failed",
+  "requestId": "req-123",
+  "validationErrors": [
+    { "field": "fieldName", "message": "Field error message" }
+  ]
+}
+```
