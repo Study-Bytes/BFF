@@ -241,14 +241,32 @@ public class ProxyExchangeService {
                 .filter(name -> !shouldSkipHeader(name, SKIP_REQUEST_HEADERS))
                 .forEach(name -> headers.addAll(name, Collections.list(request.getHeaders(name))));
 
-        headerOverrides.forEach(headers::set);
+        String accessTokenFromCookie = readCookie(request, authCookieProperties.getAccessName());
+        String authorizationHeader = headers.getFirst(HttpHeaders.AUTHORIZATION);
+        boolean overrideAuthorizationProvided = headerOverrides.containsKey(HttpHeaders.AUTHORIZATION);
 
-        if (!headers.containsKey(HttpHeaders.AUTHORIZATION)) {
-            String accessToken = readCookie(request, authCookieProperties.getAccessName());
-            if (accessToken != null && !accessToken.isBlank()) {
-                headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken);
+        if (!overrideAuthorizationProvided && accessTokenFromCookie != null && !accessTokenFromCookie.isBlank()) {
+            if (authorizationHeader == null || !isLikelyBearerJwt(authorizationHeader)) {
+                headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + accessTokenFromCookie);
             }
         }
+
+        headerOverrides.forEach(headers::set);
+    }
+
+    private static boolean isLikelyBearerJwt(String authorizationHeader) {
+        if (authorizationHeader == null) {
+            return false;
+        }
+        String prefix = "Bearer ";
+        if (!authorizationHeader.regionMatches(true, 0, prefix, 0, prefix.length())) {
+            return false;
+        }
+        String token = authorizationHeader.substring(prefix.length()).trim();
+        if (token.isBlank()) {
+            return false;
+        }
+        return token.chars().filter(ch -> ch == '.').count() == 2;
     }
 
     private String readCookie(HttpServletRequest request, String cookieName) {
