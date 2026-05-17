@@ -22,3 +22,13 @@ logging:
     org.springframework.web.reactive.function.client: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+bff:
+  auth:
+    cookies:
+      access-name: ${BFF_AUTH_ACCESS_COOKIE_NAME:access_token}
+      refresh-name: ${BFF_AUTH_REFRESH_COOKIE_NAME:refresh_token}
+      secure: ${BFF_AUTH_COOKIE_SECURE:true}
+      same-site: ${BFF_AUTH_COOKIE_SAME_SITE:Lax}
+      path: ${BFF_AUTH_COOKIE_PATH:/}
+      domain: ${BFF_AUTH_COOKIE_DOMAIN:}
