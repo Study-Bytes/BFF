@@ -7,7 +7,7 @@ svc:
   course:
     base-url: ${SVC_COURSE_BASE_URL:http://localhost:8082}
   learning:
-    base-url: ${SVC_LEARNING_BASE_URL:http://localhost:8090}
+    base-url: ${SVC_LEARNING_BASE_URL:http://localhost:8083}
 
 spring:
   main:
