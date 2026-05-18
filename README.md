@@ -30,7 +30,7 @@ BFF environment variables:
 - `SERVER_PORT` - external and application port, default `8080`;
 - `SVC_USER_BASE_URL` - UserService URL, default `http://user-service:8081`;
 - `SVC_COURSE_BASE_URL` - CourseService URL, default `http://course-service:8082`;
-- `SVC_LEARNING_BASE_URL` - LearningService URL, default `http://learning-service:8090`;
+- `SVC_LEARNING_BASE_URL` - LearningService URL, default `http://learning-service:8083`;
 - `BACKEND_NETWORK` - shared Docker network, default `studybytes_backend_net`.
 
 ## Site-facing API

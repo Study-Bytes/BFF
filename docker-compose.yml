@@ -12,7 +12,7 @@ services:
       SERVER_PORT: ${SERVER_PORT:-8080}
       SVC_USER_BASE_URL: ${SVC_USER_BASE_URL:-http://user-service:8081}
       SVC_COURSE_BASE_URL: ${SVC_COURSE_BASE_URL:-http://course-service:8082}
-      SVC_LEARNING_BASE_URL: ${SVC_LEARNING_BASE_URL:-http://learning-service:8090}
+      SVC_LEARNING_BASE_URL: ${SVC_LEARNING_BASE_URL:-http://learning-service:8083}
     ports:
       - "127.0.0.1:${SERVER_PORT:-8080}:8080"
     networks:
