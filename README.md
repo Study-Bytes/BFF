@@ -82,6 +82,8 @@ Teacher course-authoring endpoints:
 These routes are proxied by BFF to CourseService admin endpoints (`/api/v1/admin/**` and
 `/api/v1/admin/course-items/**` for item routes). Ownership/list filtering remains in CourseService:
 `ADMIN` can list all courses, `TEACHER` can list only own courses where `createdByUserId == JWT.sub`.
+For `POST /api/v1/teacher/courses`, BFF injects `createdByUserId` from `JWT.sub` when this field is absent in the
+incoming body, then forwards the request to `POST /api/v1/admin/courses`.
 
 Internal UserService paths such as `/api/v1/users/*` are not exposed by the BFF.
 
@@ -93,6 +95,8 @@ Preferred mode is BFF-managed httpOnly cookies:
 - `POST /api/v1/auth/refresh` can use refresh token from cookie when request body does not contain `refreshToken`.
 - `POST /api/v1/auth/logout` clears auth cookies at BFF level.
 - Token fields in JSON are still forwarded for MVP compatibility.
+- For upstream proxy calls, if an `access_token` cookie exists and the incoming `Authorization` header is missing
+  or not a JWT-like bearer token, BFF uses the cookie token for upstream `Authorization`.
 
 Cookie configuration environment variables:
 - `BFF_AUTH_ACCESS_COOKIE_NAME` (default `access_token`)
