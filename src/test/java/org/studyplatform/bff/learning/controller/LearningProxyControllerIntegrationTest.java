@@ -39,6 +39,7 @@ class LearningProxyControllerIntegrationTest {
 
         registry.add("svc.learning.base-url", () -> baseUrl);
         registry.add("svc.course.base-url", () -> baseUrl);
+        registry.add("svc.course.internal-api-key", () -> "dev-course-service-internal-key");
     }
 
     @AfterAll
@@ -172,6 +173,41 @@ class LearningProxyControllerIntegrationTest {
         assertThat(capturedRequests).anySatisfy(req -> assertThat(req.path()).isEqualTo("/api/v1/courses/1"));
     }
 
+    @Test
+    void learnCourseItemAggregatesLearningAndCourseContent() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/courses/1/items/100",
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"course\"");
+        assertThat(response.getBody()).contains("\"item\"");
+        assertThat(response.getBody()).contains("\"slug\":\"java-core\"");
+        assertThat(response.getBody()).contains("\"title\":\"Variables practice\"");
+        assertThat(response.getBody()).contains("\"itemType\":\"THEORY\"");
+        assertThat(response.getBody()).contains("\"progress\"");
+        assertThat(response.getBody()).contains("\"attemptsCount\":2");
+        assertThat(response.getBody()).contains("\"lastScore\":80");
+        assertThat(response.getBody()).contains("\"navigation\"");
+        assertThat(response.getBody()).contains("\"nextItemId\":101");
+        assertThat(capturedRequests).anySatisfy(req -> {
+            assertThat(req.path()).isEqualTo("/api/v1/learn/courses/1/items/100");
+            assertThat(req.authorization()).isEqualTo("Bearer student-token");
+        });
+        assertThat(capturedRequests).anySatisfy(req -> {
+            assertThat(req.path()).isEqualTo("/api/v1/internal/course-items/100/content");
+            assertThat(req.internalApiKey()).isEqualTo("dev-course-service-internal-key");
+        });
+        assertThat(capturedRequests).anySatisfy(req -> assertThat(req.path()).isEqualTo("/api/v1/courses/1"));
+    }
+
     private static void startUpstream() throws IOException {
         if (upstream != null) {
             return;
@@ -188,6 +224,7 @@ class LearningProxyControllerIntegrationTest {
                 exchange.getRequestMethod(),
                 exchange.getRequestURI().getPath(),
                 exchange.getRequestHeaders().getFirst(HttpHeaders.AUTHORIZATION),
+                exchange.getRequestHeaders().getFirst("X-Internal-Api-Key"),
                 body
         ));
 
@@ -206,10 +243,14 @@ class LearningProxyControllerIntegrationTest {
             response = "[{\"courseId\":3,\"progressPercent\":0,\"status\":\"NOT_STARTED\",\"nextItemId\":null}]";
         } else if ("/api/v1/learn/courses/1".equals(path)) {
             response = "{\"courseId\":1,\"progressPercent\":35,\"enrollmentStatus\":\"IN_PROGRESS\",\"nextItemId\":100,\"items\":[{\"itemId\":100,\"completed\":false,\"locked\":false},{\"itemId\":101,\"completed\":true,\"locked\":false}]}";
+        } else if ("/api/v1/learn/courses/1/items/100".equals(path)) {
+            response = "{\"courseId\":1,\"itemId\":100,\"progress\":{\"status\":\"NOT_STARTED\",\"attemptsCount\":2,\"lastScore\":80},\"navigation\":{\"previousItemId\":null,\"nextItemId\":101}}";
         } else if ("/api/v1/courses/3".equals(path)) {
             response = "{\"id\":3,\"slug\":\"postman-enroll-check\",\"title\":\"Postman Enroll Check\",\"shortDescription\":\"Test course for checking enrollment.\",\"difficulty\":\"BEGINNER\",\"accessType\":\"PUBLIC\",\"enrollmentEnabled\":true,\"coverImageUrl\":null,\"estimatedMinutes\":60,\"description\":\"extra\"}";
         } else if ("/api/v1/courses/1".equals(path)) {
             response = "{\"id\":1,\"slug\":\"java-core\",\"title\":\"Java Core\",\"shortDescription\":\"Learn Java fundamentals through structured lessons and practice tasks.\",\"difficulty\":\"BEGINNER\",\"accessType\":\"PUBLIC\",\"enrollmentEnabled\":true,\"coverImageUrl\":\"string\",\"estimatedMinutes\":480,\"description\":\"Full course description.\",\"status\":\"DRAFT\",\"modules\":[{\"id\":10,\"title\":\"Java Basics\",\"orderIndex\":0,\"items\":[{\"id\":100,\"title\":\"Introduction to Java\",\"itemType\":\"THEORY\",\"orderIndex\":0,\"estimatedMinutes\":10},{\"id\":102,\"title\":\"Second item\",\"itemType\":\"THEORY\",\"orderIndex\":1,\"estimatedMinutes\":8}]}]}";
+        } else if ("/api/v1/internal/course-items/100/content".equals(path)) {
+            response = "{\"itemId\":100,\"moduleId\":10,\"courseId\":1,\"title\":\"Variables practice\",\"itemType\":\"THEORY\",\"statement\":\"Solve the task\",\"starterCode\":\"print(\\\"hello\\\")\",\"language\":\"python\",\"contentBlocks\":[{\"id\":1,\"blockType\":\"TEXT\",\"orderIndex\":0,\"title\":\"Theory\",\"textContent\":\"Read this explanation.\",\"url\":\"string\",\"language\":\"java\",\"metadataJson\":\"string\"}],\"hints\":[{\"id\":1,\"orderIndex\":0,\"text\":\"Think about input parsing.\"}],\"options\":[{\"id\":1,\"orderIndex\":0,\"label\":\"A\",\"text\":\"Option text\",\"selected\":false,\"correct\":false,\"explanation\":\"Explanation\"}]}";
         } else if ("/actuator/health".equals(path)) {
             response = "{\"status\":\"UP\",\"service\":\"LearningService\"}";
         }
@@ -225,6 +266,6 @@ class LearningProxyControllerIntegrationTest {
         return capturedRequests.get(capturedRequests.size() - 1);
     }
 
-    private record CapturedRequest(String method, String path, String authorization, String body) {
+    private record CapturedRequest(String method, String path, String authorization, String internalApiKey, String body) {
     }
 }
