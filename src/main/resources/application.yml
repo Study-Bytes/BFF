@@ -6,6 +6,7 @@ svc:
     base-url: ${SVC_USER_BASE_URL:http://localhost:8081}
   course:
     base-url: ${SVC_COURSE_BASE_URL:http://localhost:8082}
+    internal-api-key: ${SVC_COURSE_INTERNAL_API_KEY:dev-course-service-internal-key}
   learning:
     base-url: ${SVC_LEARNING_BASE_URL:http://localhost:8083}
 
