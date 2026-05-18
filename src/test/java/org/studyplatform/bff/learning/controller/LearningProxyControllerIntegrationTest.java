@@ -102,6 +102,7 @@ class LearningProxyControllerIntegrationTest {
         assertThat(response.getBody()).contains("\"status\":\"ACCEPTED\"");
         assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/items/4/run");
         assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+        assertThat(lastRequest().contentType()).contains(MediaType.APPLICATION_JSON_VALUE);
         assertThat(lastRequest().body()).contains("\"sourceCode\":\"print(input())\"");
         assertThat(lastRequest().body()).contains("\"selectedOptionIds\":[]");
     }
@@ -126,8 +127,49 @@ class LearningProxyControllerIntegrationTest {
         assertThat(response.getBody()).contains("\"status\":\"ACCEPTED\"");
         assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/items/4/submit");
         assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+        assertThat(lastRequest().contentType()).contains(MediaType.APPLICATION_JSON_VALUE);
         assertThat(lastRequest().body()).contains("\"sourceCode\":\"print(input())\"");
         assertThat(lastRequest().body()).contains("\"selectedOptionIds\":[]");
+    }
+
+    @Test
+    void learnRunEndpointPreservesMeaningfulUpstream400Message() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        String payload = "{\"sourceCode\":\"trigger-400\",\"selectedOptionIds\":[]}";
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/courses/3/items/5/run",
+                org.springframework.http.HttpMethod.POST,
+                new HttpEntity<>(payload, headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).contains("\"code\":\"VALIDATION_ERROR\"");
+        assertThat(response.getBody()).contains("\"message\":\"Некорректное тело запроса\"");
+    }
+
+    @Test
+    void learnRunEndpointPreservesMeaningfulUpstream422Message() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        String payload = "{\"sourceCode\":\"trigger-422\",\"selectedOptionIds\":[]}";
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/courses/3/items/5/run",
+                org.springframework.http.HttpMethod.POST,
+                new HttpEntity<>(payload, headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode().value()).isEqualTo(422);
+        assertThat(response.getBody()).contains("\"code\":\"VALIDATION_ERROR\"");
+        assertThat(response.getBody()).contains("\"message\":\"Runnable source is required\"");
     }
 
     @Test
@@ -315,6 +357,7 @@ class LearningProxyControllerIntegrationTest {
                 exchange.getRequestURI().getPath(),
                 exchange.getRequestHeaders().getFirst(HttpHeaders.AUTHORIZATION),
                 exchange.getRequestHeaders().getFirst("X-Internal-Api-Key"),
+                exchange.getRequestHeaders().getFirst(HttpHeaders.CONTENT_TYPE),
                 body
         ));
 
@@ -330,6 +373,12 @@ class LearningProxyControllerIntegrationTest {
             response = "{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"stdout\":\"3\\n\",\"stderr\":null,\"testResults\":[{\"testKey\":\"sample-1\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":\"3\",\"message\":null,\"durationMs\":25,\"memoryMb\":32}],\"createdAt\":\"2026-05-16T12:00:00Z\"}";
         } else if ("/api/v1/learn/courses/3/items/4/submit".equals(path)) {
             response = "{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"stdout\":\"3\\n\",\"stderr\":null,\"testResults\":[{\"testKey\":\"sample-1\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":\"3\",\"message\":null,\"durationMs\":25,\"memoryMb\":32},{\"testKey\":\"hidden-1\",\"visibility\":\"HIDDEN\",\"passed\":true,\"actualOutput\":\"42\",\"message\":null,\"durationMs\":31,\"memoryMb\":35}],\"createdAt\":\"2026-05-16T12:00:00Z\"}";
+        } else if ("/api/v1/learn/courses/3/items/5/run".equals(path) && body.contains("trigger-400")) {
+            status = 400;
+            response = "{\"timestamp\":\"2026-05-18T21:49:28\",\"status\":400,\"error\":\"Bad Request\",\"message\":\"Некорректное тело запроса\",\"path\":\"/api/v1/learn/courses/3/items/5/run\"}";
+        } else if ("/api/v1/learn/courses/3/items/5/run".equals(path) && body.contains("trigger-422")) {
+            status = 422;
+            response = "{\"timestamp\":\"2026-05-18T21:49:28\",\"status\":422,\"error\":\"Unprocessable Entity\",\"message\":\"Runnable source is required\",\"path\":\"/api/v1/learn/courses/3/items/5/run\"}";
         } else if ("/api/v1/learn/courses/3/items/4/submissions".equals(path)) {
             response = "[{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"createdAt\":\"2026-05-16T12:00:00Z\"},{\"id\":499,\"itemId\":4,\"status\":\"WRONG_ANSWER\",\"score\":50,\"passedTests\":1,\"totalTests\":2,\"createdAt\":\"2026-05-16T11:50:00Z\"}]";
         } else if ("/api/v1/learn/submissions/500".equals(path)) {
@@ -364,6 +413,6 @@ class LearningProxyControllerIntegrationTest {
         return capturedRequests.get(capturedRequests.size() - 1);
     }
 
-    private record CapturedRequest(String method, String path, String authorization, String internalApiKey, String body) {
+    private record CapturedRequest(String method, String path, String authorization, String internalApiKey, String contentType, String body) {
     }
 }

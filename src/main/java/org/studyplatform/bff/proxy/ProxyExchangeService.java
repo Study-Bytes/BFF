@@ -12,6 +12,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -34,6 +36,7 @@ import java.util.UUID;
 
 @Service
 public class ProxyExchangeService {
+    private static final Logger log = LoggerFactory.getLogger(ProxyExchangeService.class);
 
     private static final Set<String> SKIP_REQUEST_HEADERS = Set.of(
             HttpHeaders.HOST,
@@ -96,9 +99,12 @@ public class ProxyExchangeService {
         try {
             requestBody = requestBodyOverride != null ? requestBodyOverride : readBody(request);
         } catch (IOException ex) {
+            String message = isLearningRunSubmit(method, upstreamUri)
+                    ? "Invalid JSON body"
+                    : "Cannot read request body";
             return errorResponse(
                     HttpStatus.BAD_REQUEST,
-                    "Cannot read request body",
+                    message,
                     resolveRequestId(request.getHeader("X-Request-Id")),
                     null
             );
@@ -107,7 +113,7 @@ public class ProxyExchangeService {
         WebClient.RequestHeadersSpec<?> spec = client
                 .method(method)
                 .uri(upstreamUri)
-                .headers(headers -> copyRequestHeaders(request, headers, headerOverrides));
+                .headers(headers -> copyRequestHeaders(request, headers, headerOverrides, method, upstreamUri));
 
         if (requestBody.length > 0 && methodAllowsBody(method.name())) {
             spec = ((WebClient.RequestBodySpec) spec).bodyValue(requestBody);
@@ -115,9 +121,51 @@ public class ProxyExchangeService {
 
         String requestId = resolveRequestId(request.getHeader("X-Request-Id"));
         Duration timeout = resolveTimeout(method, upstreamUri);
+        boolean learningRunSubmit = isLearningRunSubmit(method, upstreamUri);
+        long startedAt = System.currentTimeMillis();
+        if (learningRunSubmit) {
+            log.debug(
+                    "BFF proxy request requestId={} method={} path={} upstream={} contentType={} bodyBytes={} authPresent={}",
+                    requestId,
+                    method.name(),
+                    request.getRequestURI(),
+                    upstreamUri,
+                    request.getContentType(),
+                    requestBody.length,
+                    hasAuthorizationHeader(request)
+            );
+        }
         return spec.exchangeToMono(response -> response.toEntity(byte[].class))
-                .map(upstream -> normalizeResponse(upstream, requestId))
+                .map(upstream -> {
+                    if (learningRunSubmit) {
+                        int bodyBytes = upstream.getBody() == null ? 0 : upstream.getBody().length;
+                        long durationMs = System.currentTimeMillis() - startedAt;
+                        log.debug(
+                                "BFF proxy response requestId={} method={} upstream={} status={} durationMs={} bodyBytes={}",
+                                requestId,
+                                method.name(),
+                                upstreamUri,
+                                upstream.getStatusCode().value(),
+                                durationMs,
+                                bodyBytes
+                        );
+                    }
+                    return normalizeResponse(upstream, requestId);
+                })
                 .timeout(timeout)
+                .doOnError(ex -> {
+                    if (learningRunSubmit) {
+                        long durationMs = System.currentTimeMillis() - startedAt;
+                        log.warn(
+                                "BFF proxy error requestId={} method={} upstream={} durationMs={} reason={}",
+                                requestId,
+                                method.name(),
+                                upstreamUri,
+                                durationMs,
+                                ex.getClass().getSimpleName()
+                        );
+                    }
+                })
                 .onErrorResume(ex -> Mono.just(errorResponse(
                         HttpStatus.SERVICE_UNAVAILABLE,
                         "Upstream service is unavailable or returned an invalid response",
@@ -128,12 +176,17 @@ public class ProxyExchangeService {
     }
 
     private Duration resolveTimeout(HttpMethod method, String upstreamUri) {
-        if (method == HttpMethod.POST
-                && (upstreamUri.startsWith("/api/v1/learn/courses/") && upstreamUri.contains("/items/"))
-                && (upstreamUri.endsWith("/run") || upstreamUri.endsWith("/submit"))) {
+        if (isLearningRunSubmit(method, upstreamUri)) {
             return learningRunSubmitTimeout;
         }
         return defaultUpstreamTimeout;
+    }
+
+    private boolean isLearningRunSubmit(HttpMethod method, String upstreamUri) {
+        return method == HttpMethod.POST
+                && upstreamUri.startsWith("/api/v1/learn/courses/")
+                && upstreamUri.contains("/items/")
+                && (upstreamUri.endsWith("/run") || upstreamUri.endsWith("/submit"));
     }
 
     public String buildUpstreamUri(HttpServletRequest request, String prefixToRemove) {
@@ -209,10 +262,22 @@ public class ProxyExchangeService {
             return fallback;
         }
         if (root.hasNonNull("message")) {
-            return root.get("message").asText();
+            String message = root.get("message").asText();
+            if (!message.isBlank() && !"Bad Request".equalsIgnoreCase(message)) {
+                return message;
+            }
         }
         if (root.hasNonNull("error")) {
-            return root.get("error").asText();
+            String error = root.get("error").asText();
+            if (!error.isBlank()) {
+                return error;
+            }
+        }
+        if (root.hasNonNull("detail")) {
+            String detail = root.get("detail").asText();
+            if (!detail.isBlank()) {
+                return detail;
+            }
         }
         return fallback;
     }
@@ -255,7 +320,9 @@ public class ProxyExchangeService {
     private void copyRequestHeaders(
             HttpServletRequest request,
             HttpHeaders headers,
-            Map<String, String> headerOverrides
+            Map<String, String> headerOverrides,
+            HttpMethod method,
+            String upstreamUri
     ) {
         Collections.list(request.getHeaderNames()).stream()
                 .filter(name -> !shouldSkipHeader(name, SKIP_REQUEST_HEADERS))
@@ -271,7 +338,19 @@ public class ProxyExchangeService {
             }
         }
 
+        if (isLearningRunSubmit(method, upstreamUri) && headers.getContentType() == null) {
+            headers.setContentType(MediaType.APPLICATION_JSON);
+        }
+
         headerOverrides.forEach(headers::set);
+    }
+
+    private boolean hasAuthorizationHeader(HttpServletRequest request) {
+        String auth = request.getHeader(HttpHeaders.AUTHORIZATION);
+        if (auth != null && !auth.isBlank()) {
+            return true;
+        }
+        return readCookie(request, authCookieProperties.getAccessName()) != null;
     }
 
     private static boolean isLikelyBearerJwt(String authorizationHeader) {
