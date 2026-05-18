@@ -152,6 +152,27 @@ class LearningProxyControllerIntegrationTest {
     }
 
     @Test
+    void learnSubmissionByIdEndpointForwardsAuthorizationToLearningService() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/submissions/500",
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"id\":500");
+        assertThat(response.getBody()).contains("\"itemId\":100");
+        assertThat(response.getBody()).contains("\"status\":\"ACCEPTED\"");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/submissions/500");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+    }
+
+    @Test
     void learningSubmissionForwardsBodyAndAuthorizationHeader() {
         capturedRequests.clear();
         HttpHeaders headers = new HttpHeaders();
@@ -311,6 +332,8 @@ class LearningProxyControllerIntegrationTest {
             response = "{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"stdout\":\"3\\n\",\"stderr\":null,\"testResults\":[{\"testKey\":\"sample-1\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":\"3\",\"message\":null,\"durationMs\":25,\"memoryMb\":32},{\"testKey\":\"hidden-1\",\"visibility\":\"HIDDEN\",\"passed\":true,\"actualOutput\":\"42\",\"message\":null,\"durationMs\":31,\"memoryMb\":35}],\"createdAt\":\"2026-05-16T12:00:00Z\"}";
         } else if ("/api/v1/learn/courses/3/items/4/submissions".equals(path)) {
             response = "[{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"createdAt\":\"2026-05-16T12:00:00Z\"},{\"id\":499,\"itemId\":4,\"status\":\"WRONG_ANSWER\",\"score\":50,\"passedTests\":1,\"totalTests\":2,\"createdAt\":\"2026-05-16T11:50:00Z\"}]";
+        } else if ("/api/v1/learn/submissions/500".equals(path)) {
+            response = "{\"id\":500,\"itemId\":100,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"stdout\":\"3\\n\",\"stderr\":null,\"testResults\":[{\"testKey\":\"sample-1\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":\"3\",\"message\":null,\"durationMs\":25,\"memoryMb\":32},{\"testKey\":\"hidden-1\",\"visibility\":\"HIDDEN\",\"passed\":true,\"actualOutput\":\"42\",\"message\":null,\"durationMs\":31,\"memoryMb\":35}],\"createdAt\":\"2026-05-16T12:00:00Z\"}";
         } else if ("/api/v1/learning/tasks/7/submissions".equals(path)) {
             status = 201;
             response = "{\"id\":3,\"taskId\":7,\"verdict\":\"OK\",\"passedTestsCount\":2,\"totalTestsCount\":2}";
