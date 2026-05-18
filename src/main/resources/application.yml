@@ -25,6 +25,9 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
 bff:
+  proxy:
+    timeout-seconds: ${BFF_PROXY_TIMEOUT_SECONDS:5}
+    learning-run-submit-timeout-seconds: ${BFF_PROXY_LEARNING_RUN_SUBMIT_TIMEOUT_SECONDS:60}
   auth:
     cookies:
       access-name: ${BFF_AUTH_ACCESS_COOKIE_NAME:access_token}
