@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -27,10 +28,13 @@ import java.util.Map;
 @RequestMapping("/api/v1/learn")
 public class LearningMyCoursesController {
 
+    private static final String INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key";
+
     private final WebClient learningWebClient;
     private final WebClient courseWebClient;
     private final ObjectMapper objectMapper;
     private final AuthCookieProperties authCookieProperties;
+    private final String courseInternalApiKey;
 
     public LearningMyCoursesController(
             @Qualifier("learningWebClient")
@@ -38,12 +42,14 @@ public class LearningMyCoursesController {
             @Qualifier("courseWebClient")
             WebClient courseWebClient,
             ObjectMapper objectMapper,
-            AuthCookieProperties authCookieProperties
+            AuthCookieProperties authCookieProperties,
+            @Value("${svc.course.internal-api-key:dev-course-service-internal-key}") String courseInternalApiKey
     ) {
         this.learningWebClient = learningWebClient;
         this.courseWebClient = courseWebClient;
         this.objectMapper = objectMapper;
         this.authCookieProperties = authCookieProperties;
+        this.courseInternalApiKey = courseInternalApiKey;
     }
 
     @GetMapping("/my-courses")
@@ -191,6 +197,81 @@ public class LearningMyCoursesController {
         }
     }
 
+    @GetMapping("/courses/{courseId}/items/{itemId}")
+    public ResponseEntity<byte[]> learnCourseItem(
+            @PathVariable Long courseId,
+            @PathVariable Long itemId,
+            HttpServletRequest request
+    ) {
+        String authorization = resolveAuthorization(request);
+        if (authorization == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"message\":\"Unauthorized\"}".getBytes());
+        }
+
+        ResponseEntity<byte[]> learningItemResponse = learningWebClient.get()
+                .uri("/api/v1/learn/courses/{courseId}/items/{itemId}", courseId, itemId)
+                .header(HttpHeaders.AUTHORIZATION, authorization)
+                .exchangeToMono(res -> res.toEntity(byte[].class))
+                .block();
+        if (learningItemResponse == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"message\":\"LearningService unavailable\"}".getBytes());
+        }
+        if (!learningItemResponse.getStatusCode().is2xxSuccessful()) {
+            return ResponseEntity.status(learningItemResponse.getStatusCode())
+                    .headers(learningItemResponse.getHeaders())
+                    .body(learningItemResponse.getBody());
+        }
+
+        ResponseEntity<byte[]> itemContentResponse = courseWebClient.get()
+                .uri("/api/v1/internal/course-items/{itemId}/content", itemId)
+                .header(INTERNAL_API_KEY_HEADER, courseInternalApiKey)
+                .exchangeToMono(res -> res.toEntity(byte[].class))
+                .block();
+        if (itemContentResponse == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"message\":\"CourseService unavailable\"}".getBytes());
+        }
+        if (!itemContentResponse.getStatusCode().is2xxSuccessful()) {
+            return ResponseEntity.status(itemContentResponse.getStatusCode())
+                    .headers(itemContentResponse.getHeaders())
+                    .body(itemContentResponse.getBody());
+        }
+
+        ResponseEntity<byte[]> courseResponse = courseWebClient.get()
+                .uri("/api/v1/courses/{courseId}", courseId)
+                .exchangeToMono(res -> res.toEntity(byte[].class))
+                .block();
+        if (courseResponse == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"message\":\"CourseService unavailable\"}".getBytes());
+        }
+        if (!courseResponse.getStatusCode().is2xxSuccessful()) {
+            return ResponseEntity.status(courseResponse.getStatusCode())
+                    .headers(courseResponse.getHeaders())
+                    .body(courseResponse.getBody());
+        }
+
+        try {
+            JsonNode learningItem = objectMapper.readTree(learningItemResponse.getBody());
+            JsonNode itemContent = objectMapper.readTree(itemContentResponse.getBody());
+            JsonNode course = objectMapper.readTree(courseResponse.getBody());
+            ObjectNode merged = mergeLearningItem(course, itemContent, learningItem);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(objectMapper.writeValueAsBytes(merged));
+        } catch (Exception ex) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"message\":\"Invalid upstream response\"}".getBytes());
+        }
+    }
+
     private String resolveAuthorization(HttpServletRequest request) {
         String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (authorization != null && !authorization.isBlank()) {
@@ -286,6 +367,41 @@ public class LearningMyCoursesController {
             }
         }
         merged.set("modules", mergedModules);
+        return merged;
+    }
+
+    private ObjectNode mergeLearningItem(JsonNode course, JsonNode itemContent, JsonNode learningItem) {
+        ObjectNode merged = objectMapper.createObjectNode();
+
+        ObjectNode courseNode = objectMapper.createObjectNode();
+        copyIfPresent(course, courseNode, "id");
+        copyIfPresent(course, courseNode, "slug");
+        copyIfPresent(course, courseNode, "title");
+        merged.set("course", courseNode);
+
+        ObjectNode itemNode = objectMapper.createObjectNode();
+        itemNode.set("id", itemContent.path("itemId"));
+        copyIfPresent(itemContent, itemNode, "title");
+        copyIfPresent(itemContent, itemNode, "itemType");
+        copyIfPresent(itemContent, itemNode, "statement");
+        copyIfPresent(itemContent, itemNode, "contentBlocks");
+        copyIfPresent(itemContent, itemNode, "hints");
+        copyIfPresent(itemContent, itemNode, "options");
+        copyIfPresent(itemContent, itemNode, "starterCode");
+        copyIfPresent(itemContent, itemNode, "language");
+        merged.set("item", itemNode);
+
+        if (learningItem.has("progress")) {
+            merged.set("progress", learningItem.get("progress"));
+        } else {
+            merged.set("progress", objectMapper.createObjectNode());
+        }
+        if (learningItem.has("navigation")) {
+            merged.set("navigation", learningItem.get("navigation"));
+        } else {
+            merged.set("navigation", objectMapper.createObjectNode());
+        }
+
         return merged;
     }
 }
