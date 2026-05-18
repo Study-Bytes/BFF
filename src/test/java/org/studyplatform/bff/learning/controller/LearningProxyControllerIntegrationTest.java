@@ -62,6 +62,26 @@ class LearningProxyControllerIntegrationTest {
     }
 
     @Test
+    void learnEnrollEndpointIsForwardedToLearningService() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/courses/3/enroll",
+                org.springframework.http.HttpMethod.POST,
+                new HttpEntity<>("", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"courseId\":3");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/enroll");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+    }
+
+    @Test
     void learningSubmissionForwardsBodyAndAuthorizationHeader() {
         capturedRequests.clear();
         HttpHeaders headers = new HttpHeaders();
@@ -145,6 +165,8 @@ class LearningProxyControllerIntegrationTest {
 
         if ("/api/v1/learning/course-enrollments/2/10".equals(path)) {
             response = "{\"id\":1,\"userId\":2,\"courseId\":10,\"status\":\"IN_PROGRESS\"}";
+        } else if ("/api/v1/learn/courses/3/enroll".equals(path)) {
+            response = "{\"courseId\":3,\"enrollmentStatus\":\"ENROLLED\"}";
         } else if ("/api/v1/learning/tasks/7/submissions".equals(path)) {
             status = 201;
             response = "{\"id\":3,\"taskId\":7,\"verdict\":\"OK\",\"passedTestsCount\":2,\"totalTestsCount\":2}";
