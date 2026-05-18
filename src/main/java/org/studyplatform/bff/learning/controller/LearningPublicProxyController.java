@@ -32,4 +32,13 @@ public class LearningPublicProxyController {
                 proxyExchangeService.buildAuthOrUsersUri(request)
         );
     }
+
+    @RequestMapping("/submissions/**")
+    public ResponseEntity<byte[]> proxyLearnSubmissionsRequest(HttpServletRequest request) {
+        return proxyExchangeService.exchange(
+                request,
+                learningWebClient,
+                proxyExchangeService.buildAuthOrUsersUri(request)
+        );
+    }
 }
