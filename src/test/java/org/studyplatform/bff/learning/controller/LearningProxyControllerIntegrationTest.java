@@ -107,6 +107,30 @@ class LearningProxyControllerIntegrationTest {
     }
 
     @Test
+    void learnSubmitEndpointForwardsBodyAndAuthorizationToLearningService() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        String payload = "{\"sourceCode\":\"print(input())\",\"sql\":null,\"selectedOptionIds\":[]}";
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/courses/3/items/4/submit",
+                org.springframework.http.HttpMethod.POST,
+                new HttpEntity<>(payload, headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"itemId\":4");
+        assertThat(response.getBody()).contains("\"status\":\"ACCEPTED\"");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/items/4/submit");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+        assertThat(lastRequest().body()).contains("\"sourceCode\":\"print(input())\"");
+        assertThat(lastRequest().body()).contains("\"selectedOptionIds\":[]");
+    }
+
+    @Test
     void learningSubmissionForwardsBodyAndAuthorizationHeader() {
         capturedRequests.clear();
         HttpHeaders headers = new HttpHeaders();
@@ -262,6 +286,8 @@ class LearningProxyControllerIntegrationTest {
             response = "{\"courseId\":3,\"enrollmentStatus\":\"ENROLLED\"}";
         } else if ("/api/v1/learn/courses/3/items/4/run".equals(path)) {
             response = "{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"stdout\":\"3\\n\",\"stderr\":null,\"testResults\":[{\"testKey\":\"sample-1\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":\"3\",\"message\":null,\"durationMs\":25,\"memoryMb\":32}],\"createdAt\":\"2026-05-16T12:00:00Z\"}";
+        } else if ("/api/v1/learn/courses/3/items/4/submit".equals(path)) {
+            response = "{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"stdout\":\"3\\n\",\"stderr\":null,\"testResults\":[{\"testKey\":\"sample-1\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":\"3\",\"message\":null,\"durationMs\":25,\"memoryMb\":32},{\"testKey\":\"hidden-1\",\"visibility\":\"HIDDEN\",\"passed\":true,\"actualOutput\":\"42\",\"message\":null,\"durationMs\":31,\"memoryMb\":35}],\"createdAt\":\"2026-05-16T12:00:00Z\"}";
         } else if ("/api/v1/learning/tasks/7/submissions".equals(path)) {
             status = 201;
             response = "{\"id\":3,\"taskId\":7,\"verdict\":\"OK\",\"passedTestsCount\":2,\"totalTestsCount\":2}";
