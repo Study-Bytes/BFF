@@ -238,6 +238,24 @@ class UserProxyIntegrationTest {
     }
 
     @Test
+    void teacherCreateCourseInjectsCreatedByUserIdFromJwtSub() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth("e30.eyJzdWIiOiIyIn0.signature");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/teacher/courses",
+                HttpMethod.POST,
+                new HttpEntity<>("{\"title\":\"Java Core\"}", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/courses");
+        assertThat(lastRequest().body()).contains("\"createdByUserId\":2");
+    }
+
+    @Test
     void teacherCourseProxyPrefersAccessCookieWhenAuthorizationIsNotJwt() {
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.AUTHORIZATION, "Bearer token");
@@ -432,7 +450,17 @@ class UserProxyIntegrationTest {
         } else if ("/api/v1/courses".equals(path)) {
             response = "{\"courses\":[]}";
         } else if ("/api/v1/admin/courses".equals(path)) {
-            response = "{\"adminCourses\":[]}";
+            if ("POST".equals(exchange.getRequestMethod())) {
+                if (body.contains("\"createdByUserId\"")) {
+                    status = 201;
+                    response = "{\"id\":101}";
+                } else {
+                    status = 400;
+                    response = "{\"message\":\"createdByUserId: не должно равняться null\"}";
+                }
+            } else {
+                response = "{\"adminCourses\":[]}";
+            }
         } else if ("/health".equals(path)) {
             response = "{\"status\":\"UP\",\"service\":\"UserService\",\"timestamp\":\"2026-05-13T12:00:00Z\"}";
         } else if ("/ready".equals(path)) {
