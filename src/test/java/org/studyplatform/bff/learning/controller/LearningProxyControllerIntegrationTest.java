@@ -18,6 +18,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LearningProxyControllerIntegrationTest {
 
     private static HttpServer upstream;
-    private static volatile CapturedRequest lastRequest;
+    private static final List<CapturedRequest> capturedRequests = new CopyOnWriteArrayList<>();
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -36,6 +38,7 @@ class LearningProxyControllerIntegrationTest {
         String baseUrl = "http://localhost:" + upstream.getAddress().getPort();
 
         registry.add("svc.learning.base-url", () -> baseUrl);
+        registry.add("svc.course.base-url", () -> baseUrl);
     }
 
     @AfterAll
@@ -47,6 +50,7 @@ class LearningProxyControllerIntegrationTest {
 
     @Test
     void learningProgressRequestIsForwardedToLearningService() {
+        capturedRequests.clear();
         ResponseEntity<String> response = restTemplate.getForEntity(
                 "/api/v1/learning/course-enrollments/2/10",
                 String.class
@@ -54,11 +58,12 @@ class LearningProxyControllerIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).contains("\"courseId\":10");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/learning/course-enrollments/2/10");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/learning/course-enrollments/2/10");
     }
 
     @Test
     void learningSubmissionForwardsBodyAndAuthorizationHeader() {
+        capturedRequests.clear();
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("student-token");
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -75,18 +80,44 @@ class LearningProxyControllerIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(response.getBody()).contains("\"verdict\":\"OK\"");
-        assertThat(lastRequest.path()).isEqualTo("/api/v1/learning/tasks/7/submissions");
-        assertThat(lastRequest.authorization()).isEqualTo("Bearer student-token");
-        assertThat(lastRequest.body()).contains("\"sourceCode\":\"print(42)\"");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/learning/tasks/7/submissions");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+        assertThat(lastRequest().body()).contains("\"sourceCode\":\"print(42)\"");
     }
 
     @Test
     void learningHealthIsForwardedToActuatorHealth() {
+        capturedRequests.clear();
         ResponseEntity<String> response = restTemplate.getForEntity("/learning-service/health", String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).contains("\"service\":\"LearningService\"");
-        assertThat(lastRequest.path()).isEqualTo("/actuator/health");
+        assertThat(lastRequest().path()).isEqualTo("/actuator/health");
+    }
+
+    @Test
+    void learnMyCoursesAggregatesLearningAndCourseData() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/my-courses",
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"course\"");
+        assertThat(response.getBody()).contains("\"id\":3");
+        assertThat(response.getBody()).contains("\"title\":\"Postman Enroll Check\"");
+        assertThat(response.getBody()).contains("\"progressPercent\":0");
+        assertThat(capturedRequests).anySatisfy(req -> {
+            assertThat(req.path()).isEqualTo("/api/v1/learn/my-courses");
+            assertThat(req.authorization()).isEqualTo("Bearer student-token");
+        });
+        assertThat(capturedRequests).anySatisfy(req -> assertThat(req.path()).isEqualTo("/api/v1/courses/3"));
     }
 
     private static void startUpstream() throws IOException {
@@ -101,12 +132,12 @@ class LearningProxyControllerIntegrationTest {
 
     private static void handle(HttpExchange exchange) throws IOException {
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        lastRequest = new CapturedRequest(
+        capturedRequests.add(new CapturedRequest(
                 exchange.getRequestMethod(),
                 exchange.getRequestURI().getPath(),
                 exchange.getRequestHeaders().getFirst(HttpHeaders.AUTHORIZATION),
                 body
-        );
+        ));
 
         String path = exchange.getRequestURI().getPath();
         int status = 200;
@@ -117,6 +148,10 @@ class LearningProxyControllerIntegrationTest {
         } else if ("/api/v1/learning/tasks/7/submissions".equals(path)) {
             status = 201;
             response = "{\"id\":3,\"taskId\":7,\"verdict\":\"OK\",\"passedTestsCount\":2,\"totalTestsCount\":2}";
+        } else if ("/api/v1/learn/my-courses".equals(path)) {
+            response = "[{\"courseId\":3,\"progressPercent\":0,\"status\":\"NOT_STARTED\",\"nextItemId\":null}]";
+        } else if ("/api/v1/courses/3".equals(path)) {
+            response = "{\"id\":3,\"slug\":\"postman-enroll-check\",\"title\":\"Postman Enroll Check\",\"shortDescription\":\"Test course for checking enrollment.\",\"difficulty\":\"BEGINNER\",\"accessType\":\"PUBLIC\",\"enrollmentEnabled\":true,\"coverImageUrl\":null,\"estimatedMinutes\":60,\"description\":\"extra\"}";
         } else if ("/actuator/health".equals(path)) {
             response = "{\"status\":\"UP\",\"service\":\"LearningService\"}";
         }
@@ -126,6 +161,10 @@ class LearningProxyControllerIntegrationTest {
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
+    }
+
+    private static CapturedRequest lastRequest() {
+        return capturedRequests.get(capturedRequests.size() - 1);
     }
 
     private record CapturedRequest(String method, String path, String authorization, String body) {
