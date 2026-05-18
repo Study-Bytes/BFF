@@ -11,6 +11,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -47,10 +48,19 @@ public class ProxyExchangeService {
 
     private final ObjectMapper objectMapper;
     private final AuthCookieProperties authCookieProperties;
+    private final Duration defaultUpstreamTimeout;
+    private final Duration learningRunSubmitTimeout;
 
-    public ProxyExchangeService(ObjectMapper objectMapper, AuthCookieProperties authCookieProperties) {
+    public ProxyExchangeService(
+            ObjectMapper objectMapper,
+            AuthCookieProperties authCookieProperties,
+            @Value("${bff.proxy.timeout-seconds:5}") long defaultUpstreamTimeoutSeconds,
+            @Value("${bff.proxy.learning-run-submit-timeout-seconds:60}") long learningRunSubmitTimeoutSeconds
+    ) {
         this.objectMapper = objectMapper;
         this.authCookieProperties = authCookieProperties;
+        this.defaultUpstreamTimeout = Duration.ofSeconds(defaultUpstreamTimeoutSeconds);
+        this.learningRunSubmitTimeout = Duration.ofSeconds(learningRunSubmitTimeoutSeconds);
     }
 
     public ResponseEntity<byte[]> exchange(HttpServletRequest request, WebClient client, String upstreamUri) {
@@ -104,9 +114,10 @@ public class ProxyExchangeService {
         }
 
         String requestId = resolveRequestId(request.getHeader("X-Request-Id"));
+        Duration timeout = resolveTimeout(method, upstreamUri);
         return spec.exchangeToMono(response -> response.toEntity(byte[].class))
                 .map(upstream -> normalizeResponse(upstream, requestId))
-                .timeout(Duration.ofSeconds(5))
+                .timeout(timeout)
                 .onErrorResume(ex -> Mono.just(errorResponse(
                         HttpStatus.SERVICE_UNAVAILABLE,
                         "Upstream service is unavailable or returned an invalid response",
@@ -114,6 +125,15 @@ public class ProxyExchangeService {
                         null
                 )))
                 .block();
+    }
+
+    private Duration resolveTimeout(HttpMethod method, String upstreamUri) {
+        if (method == HttpMethod.POST
+                && (upstreamUri.startsWith("/api/v1/learn/courses/") && upstreamUri.contains("/items/"))
+                && (upstreamUri.endsWith("/run") || upstreamUri.endsWith("/submit"))) {
+            return learningRunSubmitTimeout;
+        }
+        return defaultUpstreamTimeout;
     }
 
     public String buildUpstreamUri(HttpServletRequest request, String prefixToRemove) {
