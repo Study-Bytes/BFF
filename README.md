@@ -87,6 +87,7 @@ incoming body, then forwards the request to `POST /api/v1/admin/courses`.
 
 Learning endpoints:
 - `GET /api/v1/learn/my-courses`
+- `POST /api/v1/learn/courses/{courseId}/items/{itemId}/run`
 
 `GET /api/v1/learn/my-courses` is an aggregation endpoint: BFF requests
 `GET /api/v1/learn/my-courses` from LearningService, then fetches course metadata for each returned `courseId` from
