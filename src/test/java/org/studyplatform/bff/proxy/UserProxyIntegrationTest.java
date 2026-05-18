@@ -309,6 +309,31 @@ class UserProxyIntegrationTest {
     }
 
     @Test
+    void teacherItemTestCasesArrayBodyIsWrappedForCourseServiceContract() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        String payload = """
+                [{"testKey":"hidden-1","orderIndex":0,"visibility":"OPEN","inputData":"1","expectedOutput":"1"}]
+                """;
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/teacher/items/42/test-cases",
+                HttpMethod.PUT,
+                new HttpEntity<>(payload, headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo("PUT");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/course-items/42/test-cases");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
+        assertThat(lastRequest().body()).contains("\"testCases\":[");
+        assertThat(lastRequest().body()).contains("\"testKey\":\"hidden-1\"");
+    }
+
+    @Test
     void defaultLocaleResolvesFromAccountSettingThenAcceptLanguageThenFallback() {
         HttpHeaders authHeaders = new HttpHeaders();
         authHeaders.setBearerAuth("access-token");

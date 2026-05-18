@@ -28,6 +28,7 @@ public class CourseTeacherProxyController {
     private static final String ADMIN_PREFIX = "/api/v1/admin";
     private static final String ADMIN_COURSE_ITEMS_PREFIX = "/api/v1/admin/course-items";
     private static final String TEACHER_CREATE_COURSE_PATH = "/api/v1/teacher/courses";
+    private static final String TEACHER_ITEM_TEST_CASES_SUFFIX = "/test-cases";
 
     private final WebClient courseWebClient;
     private final ProxyExchangeService proxyExchangeService;
@@ -54,6 +55,10 @@ public class CourseTeacherProxyController {
             byte[] patchedBody = injectCreatedByUserIdIfNeeded(request);
             return proxyExchangeService.exchange(request, courseWebClient, upstreamUri, patchedBody, Map.of());
         }
+        if (isTeacherReplaceTestCases(request)) {
+            byte[] wrappedBody = wrapTeacherTestCasesArrayIfNeeded(request);
+            return proxyExchangeService.exchange(request, courseWebClient, upstreamUri, wrappedBody, Map.of());
+        }
 
         return proxyExchangeService.exchange(
                 request,
@@ -79,6 +84,31 @@ public class CourseTeacherProxyController {
     private boolean isTeacherCreateCourse(HttpServletRequest request) {
         return HttpMethod.POST.matches(request.getMethod())
                 && TEACHER_CREATE_COURSE_PATH.equals(request.getRequestURI());
+    }
+
+    private boolean isTeacherReplaceTestCases(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        return HttpMethod.PUT.matches(request.getMethod())
+                && uri.startsWith(TEACHER_ITEMS_PREFIX + "/")
+                && uri.endsWith(TEACHER_ITEM_TEST_CASES_SUFFIX);
+    }
+
+    private byte[] wrapTeacherTestCasesArrayIfNeeded(HttpServletRequest request) {
+        byte[] rawBody = readBodySafe(request);
+        if (rawBody.length == 0) {
+            return rawBody;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(rawBody);
+            if (!root.isArray()) {
+                return rawBody;
+            }
+            ObjectNode wrapped = objectMapper.createObjectNode();
+            wrapped.set("testCases", root);
+            return objectMapper.writeValueAsBytes(wrapped);
+        } catch (IOException ex) {
+            return rawBody;
+        }
     }
 
     private byte[] injectCreatedByUserIdIfNeeded(HttpServletRequest request) {
