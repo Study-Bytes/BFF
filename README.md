@@ -85,6 +85,14 @@ These routes are proxied by BFF to CourseService admin endpoints (`/api/v1/admin
 For `POST /api/v1/teacher/courses`, BFF injects `createdByUserId` from `JWT.sub` when this field is absent in the
 incoming body, then forwards the request to `POST /api/v1/admin/courses`.
 
+Learning endpoints:
+- `GET /api/v1/learn/my-courses`
+
+`GET /api/v1/learn/my-courses` is an aggregation endpoint: BFF requests
+`GET /api/v1/learn/my-courses` from LearningService, then fetches course metadata for each returned `courseId` from
+CourseService public `GET /api/v1/courses/{courseId}`, and returns frontend-ready items:
+`{ course, progressPercent, status, nextItemId }`.
+
 Internal UserService paths such as `/api/v1/users/*` are not exposed by the BFF.
 
 ## Auth mode (production)
