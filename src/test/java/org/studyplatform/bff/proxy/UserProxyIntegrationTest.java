@@ -274,7 +274,7 @@ class UserProxyIntegrationTest {
     }
 
     @Test
-    void teacherItemEndpointsMapToAdminCourseItemsAndKeepBody() {
+    void teacherItemEndpointsMapToAdminCourseItemsAndWrapContentBlocksBody() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("access-token");
 
@@ -305,7 +305,8 @@ class UserProxyIntegrationTest {
         assertThat(lastRequest().method()).isEqualTo("PUT");
         assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/course-items/42/content-blocks");
         assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
-        assertThat(lastRequest().body()).isEqualTo(payload);
+        assertThat(lastRequest().body()).contains("\"contentBlocks\":[");
+        assertThat(lastRequest().body()).contains("\"type\":\"TEXT\"");
     }
 
     @Test
