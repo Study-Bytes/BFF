@@ -28,6 +28,7 @@ public class CourseTeacherProxyController {
     private static final String ADMIN_PREFIX = "/api/v1/admin";
     private static final String ADMIN_COURSE_ITEMS_PREFIX = "/api/v1/admin/course-items";
     private static final String TEACHER_CREATE_COURSE_PATH = "/api/v1/teacher/courses";
+    private static final String TEACHER_ITEM_CONTENT_BLOCKS_SUFFIX = "/content-blocks";
     private static final String TEACHER_ITEM_TEST_CASES_SUFFIX = "/test-cases";
 
     private final WebClient courseWebClient;
@@ -57,6 +58,10 @@ public class CourseTeacherProxyController {
         }
         if (isTeacherReplaceTestCases(request)) {
             byte[] wrappedBody = wrapTeacherTestCasesArrayIfNeeded(request);
+            return proxyExchangeService.exchange(request, courseWebClient, upstreamUri, wrappedBody, Map.of());
+        }
+        if (isTeacherReplaceContentBlocks(request)) {
+            byte[] wrappedBody = wrapTeacherContentBlocksArrayIfNeeded(request);
             return proxyExchangeService.exchange(request, courseWebClient, upstreamUri, wrappedBody, Map.of());
         }
 
@@ -93,7 +98,22 @@ public class CourseTeacherProxyController {
                 && uri.endsWith(TEACHER_ITEM_TEST_CASES_SUFFIX);
     }
 
+    private boolean isTeacherReplaceContentBlocks(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        return HttpMethod.PUT.matches(request.getMethod())
+                && uri.startsWith(TEACHER_ITEMS_PREFIX + "/")
+                && uri.endsWith(TEACHER_ITEM_CONTENT_BLOCKS_SUFFIX);
+    }
+
+    private byte[] wrapTeacherContentBlocksArrayIfNeeded(HttpServletRequest request) {
+        return wrapArrayBodyWithFieldName(request, "contentBlocks");
+    }
+
     private byte[] wrapTeacherTestCasesArrayIfNeeded(HttpServletRequest request) {
+        return wrapArrayBodyWithFieldName(request, "testCases");
+    }
+
+    private byte[] wrapArrayBodyWithFieldName(HttpServletRequest request, String fieldName) {
         byte[] rawBody = readBodySafe(request);
         if (rawBody.length == 0) {
             return rawBody;
@@ -104,7 +124,7 @@ public class CourseTeacherProxyController {
                 return rawBody;
             }
             ObjectNode wrapped = objectMapper.createObjectNode();
-            wrapped.set("testCases", root);
+            wrapped.set(fieldName, root);
             return objectMapper.writeValueAsBytes(wrapped);
         } catch (IOException ex) {
             return rawBody;
