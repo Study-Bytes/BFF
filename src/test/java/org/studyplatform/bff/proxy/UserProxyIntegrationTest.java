@@ -335,6 +335,56 @@ class UserProxyIntegrationTest {
     }
 
     @Test
+    void teacherItemHintsArrayBodyIsWrappedForCourseServiceContract() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        String payload = """
+                [{"orderIndex":0,"text":"Think about input parsing."}]
+                """;
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/teacher/items/42/hints",
+                HttpMethod.PUT,
+                new HttpEntity<>(payload, headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo("PUT");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/course-items/42/hints");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
+        assertThat(lastRequest().body()).contains("\"hints\":[");
+        assertThat(lastRequest().body()).contains("\"text\":\"Think about input parsing.\"");
+    }
+
+    @Test
+    void teacherItemOptionsArrayBodyIsWrappedForCourseServiceContract() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        String payload = """
+                [{"orderIndex":0,"label":"A","text":"Option text","correct":true,"explanation":"Because it is correct."}]
+                """;
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/teacher/items/42/options",
+                HttpMethod.PUT,
+                new HttpEntity<>(payload, headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo("PUT");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/admin/course-items/42/options");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
+        assertThat(lastRequest().body()).contains("\"options\":[");
+        assertThat(lastRequest().body()).contains("\"text\":\"Option text\"");
+    }
+
+    @Test
     void defaultLocaleResolvesFromAccountSettingThenAcceptLanguageThenFallback() {
         HttpHeaders authHeaders = new HttpHeaders();
         authHeaders.setBearerAuth("access-token");
