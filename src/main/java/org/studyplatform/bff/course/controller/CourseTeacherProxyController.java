@@ -29,7 +29,9 @@ public class CourseTeacherProxyController {
     private static final String ADMIN_COURSE_ITEMS_PREFIX = "/api/v1/admin/course-items";
     private static final String TEACHER_CREATE_COURSE_PATH = "/api/v1/teacher/courses";
     private static final String TEACHER_ITEM_CONTENT_BLOCKS_SUFFIX = "/content-blocks";
+    private static final String TEACHER_ITEM_HINTS_SUFFIX = "/hints";
     private static final String TEACHER_ITEM_TEST_CASES_SUFFIX = "/test-cases";
+    private static final String TEACHER_ITEM_OPTIONS_SUFFIX = "/options";
 
     private final WebClient courseWebClient;
     private final ProxyExchangeService proxyExchangeService;
@@ -62,6 +64,14 @@ public class CourseTeacherProxyController {
         }
         if (isTeacherReplaceContentBlocks(request)) {
             byte[] wrappedBody = wrapTeacherContentBlocksArrayIfNeeded(request);
+            return proxyExchangeService.exchange(request, courseWebClient, upstreamUri, wrappedBody, Map.of());
+        }
+        if (isTeacherReplaceHints(request)) {
+            byte[] wrappedBody = wrapTeacherHintsArrayIfNeeded(request);
+            return proxyExchangeService.exchange(request, courseWebClient, upstreamUri, wrappedBody, Map.of());
+        }
+        if (isTeacherReplaceOptions(request)) {
+            byte[] wrappedBody = wrapTeacherOptionsArrayIfNeeded(request);
             return proxyExchangeService.exchange(request, courseWebClient, upstreamUri, wrappedBody, Map.of());
         }
 
@@ -105,12 +115,34 @@ public class CourseTeacherProxyController {
                 && uri.endsWith(TEACHER_ITEM_CONTENT_BLOCKS_SUFFIX);
     }
 
+    private boolean isTeacherReplaceHints(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        return HttpMethod.PUT.matches(request.getMethod())
+                && uri.startsWith(TEACHER_ITEMS_PREFIX + "/")
+                && uri.endsWith(TEACHER_ITEM_HINTS_SUFFIX);
+    }
+
+    private boolean isTeacherReplaceOptions(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        return HttpMethod.PUT.matches(request.getMethod())
+                && uri.startsWith(TEACHER_ITEMS_PREFIX + "/")
+                && uri.endsWith(TEACHER_ITEM_OPTIONS_SUFFIX);
+    }
+
     private byte[] wrapTeacherContentBlocksArrayIfNeeded(HttpServletRequest request) {
         return wrapArrayBodyWithFieldName(request, "contentBlocks");
     }
 
+    private byte[] wrapTeacherHintsArrayIfNeeded(HttpServletRequest request) {
+        return wrapArrayBodyWithFieldName(request, "hints");
+    }
+
     private byte[] wrapTeacherTestCasesArrayIfNeeded(HttpServletRequest request) {
         return wrapArrayBodyWithFieldName(request, "testCases");
+    }
+
+    private byte[] wrapTeacherOptionsArrayIfNeeded(HttpServletRequest request) {
+        return wrapArrayBodyWithFieldName(request, "options");
     }
 
     private byte[] wrapArrayBodyWithFieldName(HttpServletRequest request, String fieldName) {
