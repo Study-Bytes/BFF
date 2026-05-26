@@ -165,3 +165,4 @@ For Learning `run/submit` calls only, BFF writes debug diagnostics:
 - timeout/error reason when request fails.
 
 Sensitive values are not logged: JWT token value, cookies, source code, SQL body.
+
