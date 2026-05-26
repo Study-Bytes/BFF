@@ -341,6 +341,9 @@ public class LearningMyCoursesController {
                 copyIfPresent(module, mergedModule, "id");
                 copyIfPresent(module, mergedModule, "title");
                 copyIfPresent(module, mergedModule, "orderIndex");
+                copyIfPresent(module, mergedModule, "deadlineType");
+                copyIfPresent(module, mergedModule, "deadlineAt");
+                copyIfPresent(module, mergedModule, "timeLimitMinutes");
 
                 ArrayNode mergedItems = objectMapper.createArrayNode();
                 JsonNode moduleItems = module.path("items");
