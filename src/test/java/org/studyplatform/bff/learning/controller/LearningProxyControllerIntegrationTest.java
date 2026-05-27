@@ -297,6 +297,77 @@ class LearningProxyControllerIntegrationTest {
     }
 
     @Test
+    void learnMyCoursesAddsTeacherOwnedCoursesFromCourseService() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("e30.eyJzdWIiOiI1In0.signature");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/my-courses",
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"relation\":\"TEACHER\"");
+        assertThat(response.getBody()).contains("\"id\":2");
+        assertThat(response.getBody()).contains("\"title\":\"SQL Course\"");
+        assertThat(response.getBody()).contains("\"status\":\"DRAFT\"");
+        assertThat(response.getBody()).contains("\"createdByUserId\":5");
+        assertThat(response.getBody()).contains("\"progressPercent\":null");
+        assertThat(response.getBody()).contains("\"nextItemId\":null");
+        assertThat(capturedRequests).anySatisfy(req -> {
+            assertThat(req.path()).isEqualTo("/api/v1/admin/courses");
+            assertThat(req.query()).isEqualTo("page=0&size=100&createdByUserId=5");
+            assertThat(req.authorization()).isEqualTo("Bearer e30.eyJzdWIiOiI1In0.signature");
+        });
+    }
+
+    @Test
+    void learnMyCoursesKeepsLearnerItemWhenTeacherCourseDuplicatesEnrollment() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("e30.eyJzdWIiOiI2In0.signature");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/my-courses",
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"relation\":\"LEARNER\"");
+        assertThat(response.getBody()).contains("\"progressPercent\":0");
+        assertThat(response.getBody()).doesNotContain("\"relation\":\"TEACHER\"");
+        assertThat(response.getBody()).doesNotContain("\"createdByUserId\":6");
+    }
+
+    @Test
+    void learnMyCoursesReturnsLearnerCoursesWhenTeacherCourseListIsForbidden() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("e30.eyJzdWIiOiI3In0.signature");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/my-courses",
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"relation\":\"LEARNER\"");
+        assertThat(response.getBody()).contains("\"id\":3");
+        assertThat(response.getBody()).doesNotContain("\"relation\":\"TEACHER\"");
+        assertThat(capturedRequests).anySatisfy(req -> {
+            assertThat(req.path()).isEqualTo("/api/v1/admin/courses");
+            assertThat(req.query()).isEqualTo("page=0&size=100&createdByUserId=7");
+        });
+    }
+
+    @Test
     void learnCourseAggregatesCourseAndLearningState() {
         capturedRequests.clear();
         HttpHeaders headers = new HttpHeaders();
@@ -427,6 +498,16 @@ class LearningProxyControllerIntegrationTest {
             response = "{\"id\":1,\"slug\":\"java-core\",\"title\":\"Java Core\",\"shortDescription\":\"Learn Java fundamentals through structured lessons and practice tasks.\",\"difficulty\":\"BEGINNER\",\"accessType\":\"PUBLIC\",\"enrollmentEnabled\":true,\"coverImageUrl\":\"string\",\"estimatedMinutes\":480,\"description\":\"Full course description.\",\"status\":\"DRAFT\",\"modules\":[{\"id\":10,\"title\":\"Java Basics\",\"orderIndex\":0,\"deadlineType\":\"ABSOLUTE\",\"deadlineAt\":\"2026-06-01T23:59:00\",\"timeLimitMinutes\":null,\"items\":[{\"id\":100,\"title\":\"Introduction to Java\",\"itemType\":\"THEORY\",\"orderIndex\":0,\"estimatedMinutes\":10},{\"id\":102,\"title\":\"Second item\",\"itemType\":\"THEORY\",\"orderIndex\":1,\"estimatedMinutes\":8}]}]}";
         } else if ("/api/v1/internal/course-items/100/content".equals(path)) {
             response = "{\"itemId\":100,\"moduleId\":10,\"courseId\":1,\"title\":\"Variables practice\",\"itemType\":\"THEORY\",\"statement\":\"Solve the task\",\"starterCode\":\"print(\\\"hello\\\")\",\"language\":\"python\",\"contentBlocks\":[{\"id\":1,\"blockType\":\"TEXT\",\"orderIndex\":0,\"title\":\"Theory\",\"textContent\":\"Read this explanation.\",\"url\":\"string\",\"language\":\"java\",\"metadataJson\":\"string\"}],\"hints\":[{\"id\":1,\"orderIndex\":0,\"text\":\"Think about input parsing.\"}],\"options\":[{\"id\":1,\"orderIndex\":0,\"label\":\"A\",\"text\":\"Option text\",\"selected\":false,\"correct\":false,\"explanation\":\"Explanation\"}]}";
+        } else if ("/api/v1/admin/courses".equals(path)) {
+            String query = exchange.getRequestURI().getRawQuery();
+            if ("page=0&size=100&createdByUserId=5".equals(query)) {
+                response = "{\"content\":[{\"id\":2,\"slug\":\"sql-course\",\"title\":\"SQL Course\",\"shortDescription\":\"SQL from zero\",\"difficulty\":\"BEGINNER\",\"status\":\"DRAFT\",\"accessType\":\"PUBLIC\",\"enrollmentEnabled\":true,\"coverImageUrl\":\"https://example.com/sql.png\",\"estimatedMinutes\":180,\"createdByUserId\":5,\"createdAt\":\"2026-05-27T10:00:00Z\",\"updatedAt\":\"2026-05-27T10:30:00Z\"}],\"page\":0,\"size\":100,\"totalElements\":1,\"totalPages\":1}";
+            } else if ("page=0&size=100&createdByUserId=6".equals(query)) {
+                response = "{\"content\":[{\"id\":3,\"slug\":\"postman-enroll-check\",\"title\":\"Postman Enroll Check\",\"shortDescription\":\"Teacher duplicate\",\"difficulty\":\"BEGINNER\",\"status\":\"DRAFT\",\"accessType\":\"PUBLIC\",\"enrollmentEnabled\":true,\"coverImageUrl\":null,\"estimatedMinutes\":60,\"createdByUserId\":6}],\"page\":0,\"size\":100,\"totalElements\":1,\"totalPages\":1}";
+            } else if ("page=0&size=100&createdByUserId=7".equals(query)) {
+                status = 403;
+                response = "{\"message\":\"Forbidden\"}";
+            }
         } else if ("/actuator/health".equals(path)) {
             response = "{\"status\":\"UP\",\"service\":\"LearningService\"}";
         }
