@@ -14,13 +14,18 @@ services:
       SVC_COURSE_BASE_URL: ${SVC_COURSE_BASE_URL:-http://course-service:8082}
       SVC_COURSE_INTERNAL_API_KEY: ${SVC_COURSE_INTERNAL_API_KEY:-dev-course-service-internal-key}
       SVC_LEARNING_BASE_URL: ${SVC_LEARNING_BASE_URL:-http://learning-service:8083}
+      BFF_AVATAR_STORAGE_DIR: ${BFF_AVATAR_STORAGE_DIR:-/app/data/avatars}
     ports:
       - "127.0.0.1:${SERVER_PORT:-8080}:8080"
+    volumes:
+      - bff_avatar_data:/app/data/avatars
     networks:
       - backend_net
+
+volumes:
+  bff_avatar_data:
 
 networks:
   backend_net:
     name: ${BACKEND_NETWORK:-studybytes_backend_net}
     external: true
-
