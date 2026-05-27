@@ -20,6 +20,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import org.studyplatform.bff.proxy.ProxyExchangeService;
+import org.studyplatform.bff.user.service.AuthCookieService;
 import org.studyplatform.bff.user.service.AvatarStorageService;
 
 import java.io.IOException;
@@ -31,6 +32,7 @@ public class UserProxyController {
 
     private final WebClient userWebClient;
     private final ProxyExchangeService proxyExchangeService;
+    private final AuthCookieService authCookieService;
     private final AvatarStorageService avatarStorageService;
     private final ObjectMapper objectMapper;
 
@@ -38,11 +40,13 @@ public class UserProxyController {
             @Qualifier("userWebClient")
             WebClient userWebClient,
             ProxyExchangeService proxyExchangeService,
+            AuthCookieService authCookieService,
             AvatarStorageService avatarStorageService,
             ObjectMapper objectMapper
     ) {
         this.userWebClient = userWebClient;
         this.proxyExchangeService = proxyExchangeService;
+        this.authCookieService = authCookieService;
         this.avatarStorageService = avatarStorageService;
         this.objectMapper = objectMapper;
     }
@@ -88,13 +92,14 @@ public class UserProxyController {
             HttpServletRequest request,
             @RequestParam("file") MultipartFile file
     ) {
+        Map<String, String> authHeaderOverrides = authCookieService.authorizationFromAccessCookie(request);
         ResponseEntity<byte[]> currentUserResponse = proxyExchangeService.exchange(
                 request,
                 userWebClient,
                 HttpMethod.GET,
                 "/api/v1/users/me",
                 null,
-                Map.of()
+                authHeaderOverrides
         );
 
         if (currentUserResponse.getStatusCode().isError()) {
@@ -120,7 +125,7 @@ public class UserProxyController {
                 HttpMethod.PUT,
                 "/api/v1/users/me/settings",
                 settingsBody,
-                Map.of(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                withJsonContentType(authHeaderOverrides)
         );
 
         if (updateResponse.getStatusCode().isError()) {
@@ -130,6 +135,16 @@ public class UserProxyController {
 
         avatarStorageService.deleteStoredAvatarByUrl(previousAvatarUrl);
         return updateResponse;
+    }
+
+    private Map<String, String> withJsonContentType(Map<String, String> authHeaderOverrides) {
+        if (authHeaderOverrides.isEmpty()) {
+            return Map.of(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+        }
+        return Map.of(
+                HttpHeaders.AUTHORIZATION, authHeaderOverrides.get(HttpHeaders.AUTHORIZATION),
+                HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE
+        );
     }
 
     private JsonNode readCurrentUser(ResponseEntity<byte[]> response) {

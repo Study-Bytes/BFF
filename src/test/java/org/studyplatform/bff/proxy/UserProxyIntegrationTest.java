@@ -201,6 +201,26 @@ class UserProxyIntegrationTest {
     }
 
     @Test
+    void avatarUploadPrefersAccessCookieOverAuthorizationHeader() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("stale-header-token");
+        headers.add(HttpHeaders.COOKIE, "access_token=access-cookie-token");
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/avatar",
+                HttpMethod.POST,
+                new HttpEntity<>(multipartFile("avatar.png", MediaType.IMAGE_PNG_VALUE, new byte[]{1, 2, 3}), headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(capturedRequests).hasSize(2);
+        assertThat(capturedRequests.get(0).authorization()).isEqualTo("Bearer access-cookie-token");
+        assertThat(capturedRequests.get(1).authorization()).isEqualTo("Bearer access-cookie-token");
+    }
+
+    @Test
     void avatarUploadRejectsUnsupportedMediaType() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("access-token");
