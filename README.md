@@ -50,9 +50,20 @@ User/account/auth endpoints:
 - `GET /api/v1/me`
 - `GET /api/v1/me/settings`
 - `PUT /api/v1/me/settings`
+- `POST /api/v1/me/avatar`
+- `GET /api/v1/avatar-files/{fileName}`
 - `PUT /api/v1/me/profile`
 - `PUT /api/v1/me/password`
 - `GET /api/v1/i18n/default-locale`
+
+`PUT /api/v1/me/settings` accepts partial frontend settings updates. For example, Site may send only
+`{ "preferredLocale": "en" }`; BFF loads the current user profile from UserService, preserves the missing fields,
+and forwards a full UserService-compatible settings payload.
+
+`POST /api/v1/me/avatar` accepts `multipart/form-data` with a single `file` field. BFF accepts
+`image/png`, `image/jpeg`, `image/webp`, and `image/gif`, rejects files larger than 5 MB, stores the avatar
+server-side, updates UserService settings, and returns the updated current user/settings response. Stored avatars are
+rendered through `GET /api/v1/avatar-files/{fileName}`.
 
 Teacher request endpoints:
 - `POST /api/v1/teacher-requests`
@@ -91,26 +102,72 @@ incoming body, then forwards the request to `POST /api/v1/admin/courses`.
 Learning endpoints:
 - `GET /api/v1/learn/my-courses`
 - `GET /api/v1/learn/courses/{courseId}`
+- `GET /api/v1/learn/courses/{courseId}/leaderboard`
 - `GET /api/v1/learn/courses/{courseId}/items/{itemId}`
 - `POST /api/v1/learn/courses/{courseId}/enroll`
+- `POST /api/v1/learn/courses/{courseId}/modules/{moduleId}/start`
+- `GET /api/v1/learn/courses/{courseId}/modules/{moduleId}/deadline-state?deadlineAt={deadlineAt}`
 - `POST /api/v1/learn/courses/{courseId}/items/{itemId}/run`
 - `POST /api/v1/learn/courses/{courseId}/items/{itemId}/submit`
+- `POST /api/v1/learn/courses/{courseId}/items/{itemId}/complete`
 - `GET /api/v1/learn/courses/{courseId}/items/{itemId}/submissions`
 - `GET /api/v1/learn/submissions/{submissionId}`
 
 `GET /api/v1/learn/my-courses` is an aggregation endpoint: BFF requests
 `GET /api/v1/learn/my-courses` from LearningService, then fetches course metadata for each returned `courseId` from
 CourseService public `GET /api/v1/courses/{courseId}`, and returns frontend-ready items:
-`{ course, progressPercent, status, nextItemId }`.
+`{ course, progressPercent, status, nextItemId, relation }`.
+
+BFF also adds teacher-owned courses to `GET /api/v1/learn/my-courses` by calling CourseService admin course list with
+the current `JWT.sub` as `createdByUserId`. Enrolled courses keep `relation: "LEARNER"` and real progress. Teacher
+courses that are not enrollments are added as `relation: "TEACHER"` with `progressPercent`, `status`, and `nextItemId`
+set to `null`. CourseService errors during teacher-course enrichment are best-effort and do not break enrolled course
+responses.
 
 `GET /api/v1/learn/courses/{courseId}` and `GET /api/v1/learn/courses/{courseId}/items/{itemId}` are also
 aggregation endpoints. BFF merges course data from CourseService with learning state from LearningService.
+
+`GET /api/v1/learn/courses/{courseId}/leaderboard` is an aggregation endpoint. BFF requests the leaderboard from
+LearningService, then enriches entries with profile data from UserService. The frontend response shape is:
+
+```json
+{
+  "courseId": 3,
+  "top": [
+    {
+      "userId": 2,
+      "fullName": "Student Demo",
+      "avatarUrl": "https://study-byte.ru/api/v1/avatar-files/avatar.png",
+      "progressPercent": 85,
+      "rank": 1
+    }
+  ],
+  "currentUser": {
+    "userId": 2,
+    "fullName": "Student Demo",
+    "avatarUrl": "https://study-byte.ru/api/v1/avatar-files/avatar.png",
+    "progressPercent": 85,
+    "rank": 1
+  }
+}
+```
+
+`fullName` is taken from UserService and BFF does not use email as a display name. Relative avatar paths are converted
+to public renderable URLs. Leaderboard enrichment requires LearningService entries to include `userId`; BFF does not
+guess users from nicknames.
 
 `POST /api/v1/learn/courses/{courseId}/items/{itemId}/run` and
 `POST /api/v1/learn/courses/{courseId}/items/{itemId}/submit` are transparent proxy endpoints:
 - request body is forwarded as-is;
 - `Authorization` header/cookie token is forwarded to LearningService;
 - BFF does not execute code, does not calculate score, and does not validate business logic.
+
+`POST /api/v1/learn/courses/{courseId}/items/{itemId}/complete` is proxied to LearningService with the same auth
+forwarding as other learning endpoints. It is intended for content-only lessons such as theory/file lessons.
+
+`POST /api/v1/learn/courses/{courseId}/modules/{moduleId}/start` and
+`GET /api/v1/learn/courses/{courseId}/modules/{moduleId}/deadline-state?deadlineAt={deadlineAt}` are proxied to
+LearningService for module deadline and timer flows.
 
 `GET /api/v1/learn/courses/{courseId}/items/{itemId}/submissions` and
 `GET /api/v1/learn/submissions/{submissionId}` are proxied to LearningService and returned to frontend without
@@ -165,4 +222,3 @@ For Learning `run/submit` calls only, BFF writes debug diagnostics:
 - timeout/error reason when request fails.
 
 Sensitive values are not logged: JWT token value, cookies, source code, SQL body.
-
