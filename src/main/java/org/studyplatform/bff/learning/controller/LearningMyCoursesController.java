@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import org.studyplatform.bff.config.AuthCookieProperties;
 
 import java.util.Base64;
@@ -35,6 +37,7 @@ public class LearningMyCoursesController {
 
     private final WebClient learningWebClient;
     private final WebClient courseWebClient;
+    private final WebClient userWebClient;
     private final ObjectMapper objectMapper;
     private final AuthCookieProperties authCookieProperties;
     private final String courseInternalApiKey;
@@ -44,12 +47,15 @@ public class LearningMyCoursesController {
             WebClient learningWebClient,
             @Qualifier("courseWebClient")
             WebClient courseWebClient,
+            @Qualifier("userWebClient")
+            WebClient userWebClient,
             ObjectMapper objectMapper,
             AuthCookieProperties authCookieProperties,
             @Value("${svc.course.internal-api-key:dev-course-service-internal-key}") String courseInternalApiKey
     ) {
         this.learningWebClient = learningWebClient;
         this.courseWebClient = courseWebClient;
+        this.userWebClient = userWebClient;
         this.objectMapper = objectMapper;
         this.authCookieProperties = authCookieProperties;
         this.courseInternalApiKey = courseInternalApiKey;
@@ -146,6 +152,58 @@ public class LearningMyCoursesController {
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(responseBody);
+    }
+
+    @GetMapping("/courses/{courseId}/leaderboard")
+    public ResponseEntity<byte[]> courseLeaderboard(
+            @PathVariable Long courseId,
+            HttpServletRequest request
+    ) {
+        String authorization = resolveAuthorization(request);
+        if (authorization == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"message\":\"Unauthorized\"}".getBytes());
+        }
+
+        ResponseEntity<byte[]> learningResponse = learningWebClient.get()
+                .uri("/api/v1/learn/courses/{courseId}/leaderboard", courseId)
+                .header(HttpHeaders.AUTHORIZATION, authorization)
+                .exchangeToMono(res -> res.toEntity(byte[].class))
+                .block();
+        if (learningResponse == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"message\":\"LearningService unavailable\"}".getBytes());
+        }
+        if (!learningResponse.getStatusCode().is2xxSuccessful()) {
+            return ResponseEntity.status(learningResponse.getStatusCode())
+                    .headers(learningResponse.getHeaders())
+                    .body(learningResponse.getBody());
+        }
+
+        try {
+            JsonNode leaderboard = objectMapper.readTree(learningResponse.getBody());
+            ObjectNode enriched = objectMapper.createObjectNode();
+            copyIfPresent(leaderboard, enriched, "courseId");
+
+            Map<Long, JsonNode> usersById = loadLeaderboardUsers(leaderboard, request, authorization);
+            enriched.set("top", enrichLeaderboardEntries(leaderboard.path("top"), usersById, request));
+            JsonNode currentUser = leaderboard.path("currentUser");
+            if (currentUser.isMissingNode() || currentUser.isNull()) {
+                enriched.putNull("currentUser");
+            } else {
+                enriched.set("currentUser", enrichLeaderboardEntry(currentUser, usersById, request, null));
+            }
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(objectMapper.writeValueAsBytes(enriched));
+        } catch (Exception ex) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"message\":\"Invalid upstream response\"}".getBytes());
+        }
     }
 
     @GetMapping("/courses/{courseId}")
@@ -296,6 +354,222 @@ public class LearningMyCoursesController {
             }
         }
         return null;
+    }
+
+    private Map<Long, JsonNode> loadLeaderboardUsers(JsonNode leaderboard, HttpServletRequest request, String authorization) {
+        Set<Long> userIds = new HashSet<>();
+        collectUserIds(leaderboard.path("top"), userIds);
+        JsonNode currentUser = leaderboard.path("currentUser");
+        if (!currentUser.isMissingNode() && !currentUser.isNull()) {
+            Long currentUserId = readUserId(currentUser);
+            if (currentUserId != null) {
+                userIds.add(currentUserId);
+            }
+        }
+
+        Map<Long, JsonNode> usersById = new HashMap<>();
+        Long jwtUserId = extractUserIdFromToken(request);
+        for (Long userId : userIds) {
+            JsonNode profile = loadUserProfile(userId, jwtUserId, authorization);
+            if (profile != null) {
+                usersById.put(userId, profile);
+            }
+        }
+        return usersById;
+    }
+
+    private void collectUserIds(JsonNode entries, Set<Long> userIds) {
+        if (!entries.isArray()) {
+            return;
+        }
+        for (JsonNode entry : entries) {
+            Long userId = readUserId(entry);
+            if (userId != null) {
+                userIds.add(userId);
+            }
+        }
+    }
+
+    private JsonNode loadUserProfile(Long userId, Long jwtUserId, String authorization) {
+        try {
+            WebClient.RequestHeadersSpec<?> spec = userId.equals(jwtUserId)
+                    ? userWebClient
+                    .method(HttpMethod.GET)
+                    .uri("/api/v1/users/me")
+                    .header(HttpHeaders.AUTHORIZATION, authorization)
+                    : userWebClient
+                    .method(HttpMethod.GET)
+                    .uri("/api/v1/users/{id}", userId)
+                    .header(HttpHeaders.AUTHORIZATION, authorization);
+            ResponseEntity<byte[]> response = spec.exchangeToMono(res -> res.toEntity(byte[].class)).block();
+            if (response == null || !response.getStatusCode().is2xxSuccessful()) {
+                return null;
+            }
+            return objectMapper.readTree(response.getBody());
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private ArrayNode enrichLeaderboardEntries(JsonNode entries, Map<Long, JsonNode> usersById, HttpServletRequest request) {
+        ArrayNode result = objectMapper.createArrayNode();
+        if (!entries.isArray()) {
+            return result;
+        }
+        int fallbackRank = 1;
+        for (JsonNode entry : entries) {
+            result.add(enrichLeaderboardEntry(entry, usersById, request, fallbackRank));
+            fallbackRank++;
+        }
+        return result;
+    }
+
+    private ObjectNode enrichLeaderboardEntry(
+            JsonNode entry,
+            Map<Long, JsonNode> usersById,
+            HttpServletRequest request,
+            Integer fallbackRank
+    ) {
+        Long userId = readUserId(entry);
+        JsonNode user = userId == null ? null : usersById.get(userId);
+
+        ObjectNode result = objectMapper.createObjectNode();
+        if (userId == null) {
+            result.putNull("userId");
+        } else {
+            result.put("userId", userId);
+        }
+        putNullableText(result, "fullName", user, "fullName");
+        result.set("avatarUrl", avatarUrlNode(user == null ? null : textOrNull(user, "avatarUrl"), request));
+        putProgressPercent(result, entry);
+        Integer rank = readInt(entry, "rank", "place", "position");
+        if (rank == null) {
+            rank = fallbackRank;
+        }
+        if (rank == null) {
+            result.putNull("rank");
+        } else {
+            result.put("rank", rank);
+        }
+        return result;
+    }
+
+    private Long readUserId(JsonNode entry) {
+        if (entry == null || entry.isNull()) {
+            return null;
+        }
+        for (String field : new String[]{"userId", "studentId", "id", "user_id"}) {
+            JsonNode value = entry.get(field);
+            if (value == null || value.isNull()) {
+                continue;
+            }
+            if (value.canConvertToLong()) {
+                long userId = value.asLong();
+                return userId > 0 ? userId : null;
+            }
+            if (value.isTextual()) {
+                try {
+                    long userId = Long.parseLong(value.asText());
+                    return userId > 0 ? userId : null;
+                } catch (NumberFormatException ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Integer readInt(JsonNode entry, String... fields) {
+        if (entry == null || entry.isNull()) {
+            return null;
+        }
+        for (String field : fields) {
+            JsonNode value = entry.get(field);
+            if (value == null || value.isNull()) {
+                continue;
+            }
+            if (value.canConvertToInt()) {
+                return value.asInt();
+            }
+            if (value.isTextual()) {
+                try {
+                    return Integer.parseInt(value.asText());
+                } catch (NumberFormatException ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void putProgressPercent(ObjectNode result, JsonNode entry) {
+        JsonNode progress = firstPresent(entry, "progressPercent", "progress", "percent", "coursePercent", "completionPercent");
+        if (progress == null || progress.isNull()) {
+            result.put("progressPercent", 0);
+            return;
+        }
+        if (progress.isNumber()) {
+            result.set("progressPercent", progress);
+            return;
+        }
+        if (progress.isTextual()) {
+            try {
+                result.put("progressPercent", Double.parseDouble(progress.asText()));
+                return;
+            } catch (NumberFormatException ignored) {
+                // Fall through to default value.
+            }
+        }
+        result.put("progressPercent", 0);
+    }
+
+    private JsonNode firstPresent(JsonNode node, String... fields) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        for (String field : fields) {
+            if (node.has(field)) {
+                return node.get(field);
+            }
+        }
+        return null;
+    }
+
+    private void putNullableText(ObjectNode target, String targetField, JsonNode source, String sourceField) {
+        String value = source == null ? null : textOrNull(source, sourceField);
+        if (value == null) {
+            target.putNull(targetField);
+        } else {
+            target.put(targetField, value);
+        }
+    }
+
+    private JsonNode avatarUrlNode(String avatarUrl, HttpServletRequest request) {
+        if (avatarUrl == null) {
+            return objectMapper.nullNode();
+        }
+        String trimmed = avatarUrl.trim();
+        if (trimmed.isEmpty()) {
+            return objectMapper.nullNode();
+        }
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            return objectMapper.getNodeFactory().textNode(trimmed);
+        }
+        String publicUrl = ServletUriComponentsBuilder.fromRequestUri(request)
+                .replacePath(trimmed.startsWith("/") ? trimmed : "/" + trimmed)
+                .replaceQuery(null)
+                .build()
+                .toUriString();
+        return objectMapper.getNodeFactory().textNode(publicUrl);
+    }
+
+    private String textOrNull(JsonNode node, String fieldName) {
+        JsonNode value = node == null ? null : node.get(fieldName);
+        if (value == null || value.isNull() || !value.isTextual()) {
+            return null;
+        }
+        String text = value.asText().trim();
+        return text.isEmpty() ? null : text;
     }
 
     private void addTeacherOwnedCourses(

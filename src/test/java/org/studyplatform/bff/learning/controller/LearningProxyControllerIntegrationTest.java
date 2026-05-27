@@ -40,6 +40,7 @@ class LearningProxyControllerIntegrationTest {
 
         registry.add("svc.learning.base-url", () -> baseUrl);
         registry.add("svc.course.base-url", () -> baseUrl);
+        registry.add("svc.user.base-url", () -> baseUrl);
         registry.add("svc.course.internal-api-key", () -> "dev-course-service-internal-key");
     }
 
@@ -191,6 +192,25 @@ class LearningProxyControllerIntegrationTest {
         assertThat(response.getBody()).contains("\"itemId\":4");
         assertThat(response.getBody()).contains("\"status\":\"ACCEPTED\"");
         assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/items/4/submissions");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+    }
+
+    @Test
+    void learnCompleteEndpointForwardsAuthorizationToLearningService() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/courses/3/items/4/complete",
+                org.springframework.http.HttpMethod.POST,
+                new HttpEntity<>("", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"completed\":true");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/items/4/complete");
         assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
     }
 
@@ -368,6 +388,43 @@ class LearningProxyControllerIntegrationTest {
     }
 
     @Test
+    void learnCourseLeaderboardEnrichesEntriesWithUserProfiles() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("e30.eyJzdWIiOiIyIn0.signature");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/courses/3/leaderboard",
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"courseId\":3");
+        assertThat(response.getBody()).contains("\"userId\":2");
+        assertThat(response.getBody()).contains("\"fullName\":\"Student Two\"");
+        assertThat(response.getBody()).contains("\"avatarUrl\":\"http://localhost:");
+        assertThat(response.getBody()).contains("/api/v1/avatar-files/student-two.png");
+        assertThat(response.getBody()).contains("\"progressPercent\":85");
+        assertThat(response.getBody()).contains("\"rank\":1");
+        assertThat(response.getBody()).contains("\"currentUser\"");
+        assertThat(response.getBody()).doesNotContain("student2@example.com");
+        assertThat(capturedRequests).anySatisfy(req -> {
+            assertThat(req.path()).isEqualTo("/api/v1/learn/courses/3/leaderboard");
+            assertThat(req.authorization()).isEqualTo("Bearer e30.eyJzdWIiOiIyIn0.signature");
+        });
+        assertThat(capturedRequests).anySatisfy(req -> {
+            assertThat(req.path()).isEqualTo("/api/v1/users/me");
+            assertThat(req.authorization()).isEqualTo("Bearer e30.eyJzdWIiOiIyIn0.signature");
+        });
+        assertThat(capturedRequests).anySatisfy(req -> {
+            assertThat(req.path()).isEqualTo("/api/v1/users/3");
+            assertThat(req.authorization()).isEqualTo("Bearer e30.eyJzdWIiOiIyIn0.signature");
+        });
+    }
+
+    @Test
     void learnCourseAggregatesCourseAndLearningState() {
         capturedRequests.clear();
         HttpHeaders headers = new HttpHeaders();
@@ -479,6 +536,8 @@ class LearningProxyControllerIntegrationTest {
             response = "{\"timestamp\":\"2026-05-18T21:49:28\",\"status\":422,\"error\":\"Unprocessable Entity\",\"message\":\"Runnable source is required\",\"path\":\"/api/v1/learn/courses/3/items/5/run\"}";
         } else if ("/api/v1/learn/courses/3/items/4/submissions".equals(path)) {
             response = "[{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"createdAt\":\"2026-05-16T12:00:00Z\"},{\"id\":499,\"itemId\":4,\"status\":\"WRONG_ANSWER\",\"score\":50,\"passedTests\":1,\"totalTests\":2,\"createdAt\":\"2026-05-16T11:50:00Z\"}]";
+        } else if ("/api/v1/learn/courses/3/items/4/complete".equals(path)) {
+            response = "{\"courseId\":3,\"itemId\":4,\"completed\":true}";
         } else if ("/api/v1/learn/courses/3/modules/10/deadline-state".equals(path)) {
             response = "{\"courseId\":3,\"moduleId\":10,\"deadlineAt\":\"2026-06-01T23:59:00\",\"moduleCompletedAt\":\"2026-06-02T10:15:00\",\"moduleCompletedBeforeDeadline\":false,\"deadlineStatus\":\"COMPLETED_LATE\",\"tasksCompletedBeforeDeadline\":[{\"taskId\":101,\"completedAt\":\"2026-05-30T18:45:00\"}],\"tasksCompletedAfterDeadline\":[{\"taskId\":102,\"completedAt\":\"2026-06-02T10:10:00\"}]}";
         } else if ("/api/v1/learn/submissions/500".equals(path)) {
@@ -488,10 +547,16 @@ class LearningProxyControllerIntegrationTest {
             response = "{\"id\":3,\"taskId\":7,\"verdict\":\"OK\",\"passedTestsCount\":2,\"totalTestsCount\":2}";
         } else if ("/api/v1/learn/my-courses".equals(path)) {
             response = "[{\"courseId\":3,\"progressPercent\":0,\"status\":\"NOT_STARTED\",\"nextItemId\":null}]";
+        } else if ("/api/v1/learn/courses/3/leaderboard".equals(path)) {
+            response = "{\"courseId\":3,\"top\":[{\"userId\":2,\"nickname\":\"student2@example.com\",\"progressPercent\":85,\"place\":1},{\"userId\":3,\"nickname\":\"student3@example.com\",\"progressPercent\":70,\"place\":2}],\"currentUser\":{\"userId\":2,\"nickname\":\"student2@example.com\",\"progressPercent\":85,\"place\":1}}";
         } else if ("/api/v1/learn/courses/1".equals(path)) {
             response = "{\"courseId\":1,\"progressPercent\":35,\"enrollmentStatus\":\"IN_PROGRESS\",\"nextItemId\":100,\"items\":[{\"itemId\":100,\"completed\":false,\"locked\":false},{\"itemId\":101,\"completed\":true,\"locked\":false}]}";
         } else if ("/api/v1/learn/courses/1/items/100".equals(path)) {
             response = "{\"courseId\":1,\"itemId\":100,\"progress\":{\"status\":\"NOT_STARTED\",\"attemptsCount\":2,\"lastScore\":80},\"navigation\":{\"previousItemId\":null,\"nextItemId\":101}}";
+        } else if ("/api/v1/users/me".equals(path)) {
+            response = "{\"id\":2,\"email\":\"student2@example.com\",\"fullName\":\"Student Two\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":\"/api/v1/avatar-files/student-two.png\",\"bio\":null,\"preferredLocale\":\"ru\"}";
+        } else if ("/api/v1/users/3".equals(path)) {
+            response = "{\"id\":3,\"email\":\"student3@example.com\",\"fullName\":\"Student Three\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":\"https://cdn.example.com/student-three.png\",\"bio\":null,\"preferredLocale\":\"ru\"}";
         } else if ("/api/v1/courses/3".equals(path)) {
             response = "{\"id\":3,\"slug\":\"postman-enroll-check\",\"title\":\"Postman Enroll Check\",\"shortDescription\":\"Test course for checking enrollment.\",\"difficulty\":\"BEGINNER\",\"accessType\":\"PUBLIC\",\"enrollmentEnabled\":true,\"coverImageUrl\":null,\"estimatedMinutes\":60,\"description\":\"extra\"}";
         } else if ("/api/v1/courses/1".equals(path)) {
