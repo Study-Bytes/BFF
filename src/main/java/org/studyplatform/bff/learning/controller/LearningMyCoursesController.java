@@ -19,10 +19,13 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.studyplatform.bff.config.AuthCookieProperties;
 
+import java.util.Base64;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/v1/learn")
@@ -95,6 +98,7 @@ public class LearningMyCoursesController {
         }
 
         List<ObjectNode> mergedItems = new ArrayList<>();
+        Set<Long> addedCourseIds = new HashSet<>();
         for (JsonNode learningItem : learningItems) {
             long courseId = learningItem.path("courseId").asLong(-1);
             if (courseId <= 0) {
@@ -128,11 +132,15 @@ public class LearningMyCoursesController {
                 copyIfPresent(learningItem, merged, "progressPercent");
                 copyIfPresent(learningItem, merged, "status");
                 copyIfPresent(learningItem, merged, "nextItemId");
+                merged.put("relation", "LEARNER");
                 mergedItems.add(merged);
+                addedCourseIds.add(courseId);
             } catch (Exception ignored) {
                 // Skip broken item and continue with the rest.
             }
         }
+
+        addTeacherOwnedCourses(request, authorization, mergedItems, addedCourseIds);
 
         byte[] responseBody = toJson(mergedItems);
         return ResponseEntity.ok()
@@ -288,6 +296,109 @@ public class LearningMyCoursesController {
             }
         }
         return null;
+    }
+
+    private void addTeacherOwnedCourses(
+            HttpServletRequest request,
+            String authorization,
+            List<ObjectNode> mergedItems,
+            Set<Long> addedCourseIds
+    ) {
+        Long currentUserId = extractUserIdFromToken(request);
+        if (currentUserId == null) {
+            return;
+        }
+
+        ResponseEntity<byte[]> courseListResponse;
+        try {
+            courseListResponse = courseWebClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/api/v1/admin/courses")
+                            .queryParam("page", 0)
+                            .queryParam("size", 100)
+                            .queryParam("createdByUserId", currentUserId)
+                            .build())
+                    .header(HttpHeaders.AUTHORIZATION, authorization)
+                    .exchangeToMono(res -> res.toEntity(byte[].class))
+                    .block();
+        } catch (Exception ex) {
+            return;
+        }
+
+        if (courseListResponse == null || !courseListResponse.getStatusCode().is2xxSuccessful()) {
+            return;
+        }
+
+        try {
+            JsonNode root = objectMapper.readTree(courseListResponse.getBody());
+            JsonNode courses = root.path("content");
+            if (!courses.isArray()) {
+                return;
+            }
+            for (JsonNode courseRaw : courses) {
+                long courseId = courseRaw.path("id").asLong(-1);
+                if (courseId <= 0 || addedCourseIds.contains(courseId)) {
+                    continue;
+                }
+
+                ObjectNode course = objectMapper.createObjectNode();
+                copyTeacherCourseFields(courseRaw, course);
+
+                ObjectNode merged = objectMapper.createObjectNode();
+                merged.set("course", course);
+                merged.putNull("progressPercent");
+                merged.putNull("status");
+                merged.putNull("nextItemId");
+                merged.put("relation", "TEACHER");
+                mergedItems.add(merged);
+                addedCourseIds.add(courseId);
+            }
+        } catch (Exception ignored) {
+            // Teacher course enrichment is best-effort and must not break enrolled courses.
+        }
+    }
+
+    private Long extractUserIdFromToken(HttpServletRequest request) {
+        String authorization = resolveAuthorization(request);
+        if (authorization == null || !authorization.regionMatches(true, 0, "Bearer ", 0, "Bearer ".length())) {
+            return null;
+        }
+        String token = authorization.substring("Bearer ".length()).trim();
+        String[] parts = token.split("\\.");
+        if (parts.length < 2) {
+            return null;
+        }
+        try {
+            byte[] payloadBytes = Base64.getUrlDecoder().decode(parts[1]);
+            JsonNode payload = objectMapper.readTree(payloadBytes);
+            if (!payload.hasNonNull("sub")) {
+                return null;
+            }
+            return Long.parseLong(payload.get("sub").asText());
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private void copyTeacherCourseFields(JsonNode source, ObjectNode target) {
+        copyIfPresent(source, target, "id");
+        copyIfPresent(source, target, "slug");
+        copyIfPresent(source, target, "title");
+        copyIfPresent(source, target, "shortDescription");
+        copyIfPresent(source, target, "difficulty");
+        copyIfPresent(source, target, "status");
+        copyIfPresent(source, target, "accessType");
+        copyIfPresent(source, target, "enrollmentEnabled");
+        copyIfPresent(source, target, "coverImageUrl");
+        copyIfPresent(source, target, "estimatedMinutes");
+        copyIfPresent(source, target, "createdByUserId");
+        copyIfPresent(source, target, "createdAt");
+        copyIfPresent(source, target, "updatedAt");
+        copyIfPresent(source, target, "publishedAt");
+        copyIfPresent(source, target, "submittedForReviewAt");
+        copyIfPresent(source, target, "reviewedAt");
+        copyIfPresent(source, target, "reviewedByUserId");
+        copyIfPresent(source, target, "reviewComment");
     }
 
     private void copyIfPresent(JsonNode source, ObjectNode target, String fieldName) {
