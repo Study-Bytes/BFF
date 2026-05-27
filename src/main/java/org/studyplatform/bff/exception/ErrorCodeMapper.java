@@ -12,6 +12,8 @@ public final class ErrorCodeMapper {
             case 403 -> "FORBIDDEN";
             case 404 -> "NOT_FOUND";
             case 409 -> "CONFLICT";
+            case 413 -> "PAYLOAD_TOO_LARGE";
+            case 415 -> "UNSUPPORTED_MEDIA_TYPE";
             case 503 -> "SERVICE_UNAVAILABLE";
             default -> status >= 500 ? "INTERNAL_SERVER_ERROR" : "VALIDATION_ERROR";
         };

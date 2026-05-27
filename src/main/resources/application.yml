@@ -13,6 +13,10 @@ svc:
 spring:
   main:
     banner-mode: console
+  servlet:
+    multipart:
+      max-file-size: ${BFF_MULTIPART_MAX_FILE_SIZE:20MB}
+      max-request-size: ${BFF_MULTIPART_MAX_REQUEST_SIZE:21MB}
   web:
     resources:
       add-mappings: false
@@ -25,6 +29,8 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
 bff:
+  avatar:
+    storage-dir: ${BFF_AVATAR_STORAGE_DIR:./data/avatars}
   proxy:
     timeout-seconds: ${BFF_PROXY_TIMEOUT_SECONDS:5}
     learning-run-submit-timeout-seconds: ${BFF_PROXY_LEARNING_RUN_SUBMIT_TIMEOUT_SECONDS:60}
