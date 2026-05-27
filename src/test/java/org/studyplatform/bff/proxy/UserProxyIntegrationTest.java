@@ -176,6 +176,29 @@ class UserProxyIntegrationTest {
     }
 
     @Test
+    void meSettingsAcceptsPreferredLocaleOnlyAndPreservesCurrentProfileFields() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/settings",
+                HttpMethod.PUT,
+                new HttpEntity<>("{\"preferredLocale\":\"en\"}", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(capturedRequests).hasSize(2);
+        assertThat(capturedRequests.get(0).path()).isEqualTo("/api/v1/users/me");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/users/me/settings");
+        assertThat(lastRequest().body()).contains("\"fullName\":\"Test User\"");
+        assertThat(lastRequest().body()).contains("\"preferredLocale\":\"en\"");
+        assertThat(lastRequest().body()).contains("\"avatarUrl\":null");
+        assertThat(lastRequest().body()).contains("\"bio\":null");
+    }
+
+    @Test
     void avatarUploadStoresFileAndUpdatesCurrentUserSettings() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("access-token");
