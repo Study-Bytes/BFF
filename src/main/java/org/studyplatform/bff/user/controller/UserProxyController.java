@@ -10,6 +10,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StreamUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -80,10 +81,36 @@ public class UserProxyController {
 
     @PutMapping("/me/settings")
     public ResponseEntity<byte[]> updateCurrentUserSettings(HttpServletRequest request) {
+        byte[] rawBody;
+        try {
+            rawBody = StreamUtils.copyToByteArray(request.getInputStream());
+        } catch (IOException ex) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"status\":400,\"code\":\"VALIDATION_ERROR\",\"message\":\"Cannot read request body\"}".getBytes());
+        }
+
+        ResponseEntity<byte[]> currentUserResponse = proxyExchangeService.exchange(
+                request,
+                userWebClient,
+                HttpMethod.GET,
+                "/api/v1/users/me",
+                new byte[0],
+                Map.of()
+        );
+
+        if (currentUserResponse.getStatusCode().isError()) {
+            return currentUserResponse;
+        }
+
+        byte[] settingsBody = mergeSettingsBody(readCurrentUser(currentUserResponse), rawBody);
         return proxyExchangeService.exchange(
                 request,
                 userWebClient,
-                proxyExchangeService.buildCurrentUserUri(request)
+                HttpMethod.PUT,
+                "/api/v1/users/me/settings",
+                settingsBody,
+                Map.of(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
         );
     }
 
@@ -155,6 +182,24 @@ public class UserProxyController {
         }
     }
 
+    private byte[] mergeSettingsBody(JsonNode currentUser, byte[] rawBody) {
+        try {
+            JsonNode requestedSettings = rawBody == null || rawBody.length == 0
+                    ? objectMapper.createObjectNode()
+                    : objectMapper.readTree(rawBody);
+            ObjectNode payload = objectMapper.createObjectNode();
+            putTextOrCurrent(payload, "fullName", requestedSettings, currentUser,
+                    textOrFallback(currentUser, "fullName", textOrFallback(currentUser, "email", "User")));
+            putNullableTextOrCurrent(payload, "avatarUrl", requestedSettings, currentUser);
+            putNullableTextOrCurrent(payload, "bio", requestedSettings, currentUser);
+            putTextOrCurrent(payload, "preferredLocale", requestedSettings, currentUser,
+                    textOrFallback(currentUser, "preferredLocale", "ru"));
+            return objectMapper.writeValueAsBytes(payload);
+        } catch (IOException ex) {
+            throw new IllegalStateException("Could not serialize settings update", ex);
+        }
+    }
+
     private byte[] buildSettingsBody(JsonNode currentUser, String avatarUrl) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("fullName", textOrFallback(currentUser, "fullName", textOrFallback(currentUser, "email", "User")));
@@ -166,6 +211,33 @@ public class UserProxyController {
         } catch (IOException ex) {
             throw new IllegalStateException("Could not serialize avatar settings update", ex);
         }
+    }
+
+    private void putTextOrCurrent(
+            ObjectNode payload,
+            String field,
+            JsonNode requestedSettings,
+            JsonNode currentUser,
+            String fallback
+    ) {
+        if (requestedSettings.has(field)) {
+            payload.set(field, requestedSettings.get(field));
+            return;
+        }
+        payload.put(field, fallback);
+    }
+
+    private void putNullableTextOrCurrent(
+            ObjectNode payload,
+            String field,
+            JsonNode requestedSettings,
+            JsonNode currentUser
+    ) {
+        if (requestedSettings.has(field)) {
+            payload.set(field, requestedSettings.get(field));
+            return;
+        }
+        putNullableText(payload, field, currentUser);
     }
 
     private String publicAvatarUrl(String publicPath) {
