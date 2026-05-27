@@ -2,6 +2,7 @@ package org.studyplatform.bff.proxy;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.springframework.core.io.ByteArrayResource;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,11 +15,15 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -29,7 +34,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class UserProxyIntegrationTest {
 
     private static HttpServer upstream;
+    private static final Path avatarStorageDir;
     private static final List<CapturedRequest> capturedRequests = new CopyOnWriteArrayList<>();
+
+    static {
+        try {
+            avatarStorageDir = Files.createTempDirectory("bff-avatar-test-");
+        } catch (IOException ex) {
+            throw new IllegalStateException("Could not create avatar test storage directory", ex);
+        }
+    }
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -42,6 +56,7 @@ class UserProxyIntegrationTest {
         registry.add("svc.user.base-url", () -> baseUrl);
         registry.add("svc.course.base-url", () -> baseUrl);
         registry.add("bff.auth.cookies.secure", () -> false);
+        registry.add("bff.avatar.storage-dir", () -> avatarStorageDir.toString());
     }
 
     @AfterAll
@@ -158,6 +173,80 @@ class UserProxyIntegrationTest {
         assertThat(putResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(lastRequest().path()).isEqualTo("/api/v1/users/me/settings");
         assertThat(lastRequest().method()).isEqualTo("PUT");
+    }
+
+    @Test
+    void avatarUploadStoresFileAndUpdatesCurrentUserSettings() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/avatar",
+                HttpMethod.POST,
+                new HttpEntity<>(multipartFile("avatar.png", MediaType.IMAGE_PNG_VALUE, new byte[]{1, 2, 3}), headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"avatarUrl\"");
+        assertThat(response.getBody()).contains("/api/v1/avatar-files/");
+        assertThat(capturedRequests).hasSize(2);
+        assertThat(capturedRequests.get(0).path()).isEqualTo("/api/v1/users/me");
+        assertThat(capturedRequests.get(0).authorization()).isEqualTo("Bearer access-token");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/users/me/settings");
+        assertThat(lastRequest().method()).isEqualTo("PUT");
+        assertThat(lastRequest().body()).contains("\"avatarUrl\":\"http://localhost:");
+        assertThat(lastRequest().body()).contains("/api/v1/avatar-files/");
+    }
+
+    @Test
+    void avatarUploadRejectsUnsupportedMediaType() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/avatar",
+                HttpMethod.POST,
+                new HttpEntity<>(multipartFile("avatar.txt", MediaType.TEXT_PLAIN_VALUE, "bad".getBytes(StandardCharsets.UTF_8)), headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+        assertThat(response.getBody()).contains("\"code\":\"UNSUPPORTED_MEDIA_TYPE\"");
+    }
+
+    @Test
+    void avatarUploadRejectsTooLargeFile() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/avatar",
+                HttpMethod.POST,
+                new HttpEntity<>(multipartFile("avatar.png", MediaType.IMAGE_PNG_VALUE, new byte[(int) (5L * 1024L * 1024L + 1L)]), headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+        assertThat(response.getBody()).contains("\"code\":\"PAYLOAD_TOO_LARGE\"");
+    }
+
+    @Test
+    void avatarUploadRequiresAuthentication() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/avatar",
+                HttpMethod.POST,
+                new HttpEntity<>(multipartFile("avatar.png", MediaType.IMAGE_PNG_VALUE, new byte[]{1, 2, 3}), headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
     @Test
@@ -466,6 +555,19 @@ class UserProxyIntegrationTest {
         return capturedRequests.get(capturedRequests.size() - 1);
     }
 
+    private MultiValueMap<String, Object> multipartFile(String fileName, String contentType, byte[] bytes) {
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        HttpHeaders fileHeaders = new HttpHeaders();
+        fileHeaders.setContentType(MediaType.parseMediaType(contentType));
+        body.add("file", new HttpEntity<>(new ByteArrayResource(bytes) {
+            @Override
+            public String getFilename() {
+                return fileName;
+            }
+        }, fileHeaders));
+        return body;
+    }
+
     private static void startUpstream() throws IOException {
         if (upstream != null) {
             return;
@@ -509,7 +611,14 @@ class UserProxyIntegrationTest {
                 response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":null,\"preferredLocale\":\"ru\"}";
             }
         } else if ("/api/v1/users/me/settings".equals(path)) {
-            response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Updated User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":\"bio\",\"preferredLocale\":\"ru\"}";
+            if (body.contains("/api/v1/avatar-files/")) {
+                int start = body.indexOf("\"avatarUrl\":\"") + "\"avatarUrl\":\"".length();
+                int end = body.indexOf('"', start);
+                String avatarUrl = body.substring(start, end);
+                response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Test User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":\"" + avatarUrl + "\",\"bio\":null,\"preferredLocale\":\"ru\"}";
+            } else {
+                response = "{\"id\":2,\"email\":\"test2@mail.com\",\"fullName\":\"Updated User\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":null,\"bio\":\"bio\",\"preferredLocale\":\"ru\"}";
+            }
         } else if ("/api/v1/teacher-requests".equals(path)) {
             status = 201;
             response = "{\"id\":10,\"userId\":2,\"status\":\"PENDING\",\"motivation\":\"m\",\"experience\":\"e\",\"portfolioUrl\":null,\"preferredTopics\":[\"Java\"],\"reviewComment\":null,\"createdAt\":\"2026-05-17T12:00:00Z\",\"reviewedAt\":null,\"reviewedByUserId\":null}";
