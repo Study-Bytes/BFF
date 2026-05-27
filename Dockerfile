@@ -12,6 +12,7 @@ WORKDIR /app
 
 RUN addgroup --system app && adduser --system --ingroup app app
 COPY --from=build /workspace/target/*.jar app.jar
+RUN mkdir -p /app/data/avatars && chown -R app:app /app/data
 
 USER app
 EXPOSE 8080
