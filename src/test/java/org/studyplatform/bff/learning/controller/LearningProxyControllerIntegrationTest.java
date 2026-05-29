@@ -415,11 +415,8 @@ class LearningProxyControllerIntegrationTest {
             assertThat(req.authorization()).isEqualTo("Bearer e30.eyJzdWIiOiIyIn0.signature");
         });
         assertThat(capturedRequests).anySatisfy(req -> {
-            assertThat(req.path()).isEqualTo("/api/v1/users/me");
-            assertThat(req.authorization()).isEqualTo("Bearer e30.eyJzdWIiOiIyIn0.signature");
-        });
-        assertThat(capturedRequests).anySatisfy(req -> {
-            assertThat(req.path()).isEqualTo("/api/v1/users/3");
+            assertThat(req.path()).isEqualTo("/api/v1/users/public-profiles");
+            assertThat(req.query()).isEqualTo("ids=2,3");
             assertThat(req.authorization()).isEqualTo("Bearer e30.eyJzdWIiOiIyIn0.signature");
         });
     }
@@ -553,10 +550,8 @@ class LearningProxyControllerIntegrationTest {
             response = "{\"courseId\":1,\"progressPercent\":35,\"enrollmentStatus\":\"IN_PROGRESS\",\"nextItemId\":100,\"items\":[{\"itemId\":100,\"completed\":false,\"locked\":false},{\"itemId\":101,\"completed\":true,\"locked\":false}]}";
         } else if ("/api/v1/learn/courses/1/items/100".equals(path)) {
             response = "{\"courseId\":1,\"itemId\":100,\"progress\":{\"status\":\"NOT_STARTED\",\"attemptsCount\":2,\"lastScore\":80},\"navigation\":{\"previousItemId\":null,\"nextItemId\":101}}";
-        } else if ("/api/v1/users/me".equals(path)) {
-            response = "{\"id\":2,\"email\":\"student2@example.com\",\"fullName\":\"Student Two\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":\"/api/v1/avatar-files/student-two.png\",\"bio\":null,\"preferredLocale\":\"ru\"}";
-        } else if ("/api/v1/users/3".equals(path)) {
-            response = "{\"id\":3,\"email\":\"student3@example.com\",\"fullName\":\"Student Three\",\"role\":\"STUDENT\",\"status\":\"ACTIVE\",\"avatarUrl\":\"https://cdn.example.com/student-three.png\",\"bio\":null,\"preferredLocale\":\"ru\"}";
+        } else if ("/api/v1/users/public-profiles".equals(path)) {
+            response = "[{\"id\":2,\"fullName\":\"Student Two\",\"avatarUrl\":\"/api/v1/avatar-files/student-two.png\"},{\"id\":3,\"fullName\":\"Student Three\",\"avatarUrl\":\"https://cdn.example.com/student-three.png\"}]";
         } else if ("/api/v1/courses/3".equals(path)) {
             response = "{\"id\":3,\"slug\":\"postman-enroll-check\",\"title\":\"Postman Enroll Check\",\"shortDescription\":\"Test course for checking enrollment.\",\"difficulty\":\"BEGINNER\",\"accessType\":\"PUBLIC\",\"enrollmentEnabled\":true,\"coverImageUrl\":null,\"estimatedMinutes\":60,\"description\":\"extra\"}";
         } else if ("/api/v1/courses/1".equals(path)) {

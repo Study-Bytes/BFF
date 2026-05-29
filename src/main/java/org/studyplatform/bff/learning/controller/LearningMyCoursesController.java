@@ -9,7 +9,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -187,7 +186,7 @@ public class LearningMyCoursesController {
             ObjectNode enriched = objectMapper.createObjectNode();
             copyIfPresent(leaderboard, enriched, "courseId");
 
-            Map<Long, JsonNode> usersById = loadLeaderboardUsers(leaderboard, request, authorization);
+            Map<Long, JsonNode> usersById = loadLeaderboardUsers(leaderboard, authorization);
             enriched.set("top", enrichLeaderboardEntries(leaderboard.path("top"), usersById, request));
             JsonNode currentUser = leaderboard.path("currentUser");
             if (currentUser.isMissingNode() || currentUser.isNull()) {
@@ -356,7 +355,7 @@ public class LearningMyCoursesController {
         return null;
     }
 
-    private Map<Long, JsonNode> loadLeaderboardUsers(JsonNode leaderboard, HttpServletRequest request, String authorization) {
+    private Map<Long, JsonNode> loadLeaderboardUsers(JsonNode leaderboard, String authorization) {
         Set<Long> userIds = new HashSet<>();
         collectUserIds(leaderboard.path("top"), userIds);
         JsonNode currentUser = leaderboard.path("currentUser");
@@ -368,12 +367,39 @@ public class LearningMyCoursesController {
         }
 
         Map<Long, JsonNode> usersById = new HashMap<>();
-        Long jwtUserId = extractUserIdFromToken(request);
-        for (Long userId : userIds) {
-            JsonNode profile = loadUserProfile(userId, jwtUserId, authorization);
-            if (profile != null) {
-                usersById.put(userId, profile);
+        if (userIds.isEmpty()) {
+            return usersById;
+        }
+
+        String ids = userIds.stream()
+                .sorted()
+                .map(String::valueOf)
+                .reduce((left, right) -> left + "," + right)
+                .orElse("");
+        try {
+            ResponseEntity<byte[]> response = userWebClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/api/v1/users/public-profiles")
+                            .queryParam("ids", ids)
+                            .build())
+                    .header(HttpHeaders.AUTHORIZATION, authorization)
+                    .exchangeToMono(res -> res.toEntity(byte[].class))
+                    .block();
+            if (response == null || !response.getStatusCode().is2xxSuccessful()) {
+                return usersById;
             }
+            JsonNode profiles = objectMapper.readTree(response.getBody());
+            if (!profiles.isArray()) {
+                return usersById;
+            }
+            for (JsonNode profile : profiles) {
+                Long userId = readProfileId(profile);
+                if (userId != null) {
+                    usersById.put(userId, profile);
+                }
+            }
+        } catch (Exception ex) {
+            return usersById;
         }
         return usersById;
     }
@@ -387,27 +413,6 @@ public class LearningMyCoursesController {
             if (userId != null) {
                 userIds.add(userId);
             }
-        }
-    }
-
-    private JsonNode loadUserProfile(Long userId, Long jwtUserId, String authorization) {
-        try {
-            WebClient.RequestHeadersSpec<?> spec = userId.equals(jwtUserId)
-                    ? userWebClient
-                    .method(HttpMethod.GET)
-                    .uri("/api/v1/users/me")
-                    .header(HttpHeaders.AUTHORIZATION, authorization)
-                    : userWebClient
-                    .method(HttpMethod.GET)
-                    .uri("/api/v1/users/{id}", userId)
-                    .header(HttpHeaders.AUTHORIZATION, authorization);
-            ResponseEntity<byte[]> response = spec.exchangeToMono(res -> res.toEntity(byte[].class)).block();
-            if (response == null || !response.getStatusCode().is2xxSuccessful()) {
-                return null;
-            }
-            return objectMapper.readTree(response.getBody());
-        } catch (Exception ex) {
-            return null;
         }
     }
 
@@ -474,6 +479,29 @@ public class LearningMyCoursesController {
                 } catch (NumberFormatException ignored) {
                     return null;
                 }
+            }
+        }
+        return null;
+    }
+
+    private Long readProfileId(JsonNode profile) {
+        if (profile == null || profile.isNull()) {
+            return null;
+        }
+        JsonNode id = firstPresent(profile, "id", "userId");
+        if (id == null || id.isNull()) {
+            return null;
+        }
+        if (id.canConvertToLong()) {
+            long userId = id.asLong();
+            return userId > 0 ? userId : null;
+        }
+        if (id.isTextual()) {
+            try {
+                long userId = Long.parseLong(id.asText());
+                return userId > 0 ? userId : null;
+            } catch (NumberFormatException ignored) {
+                return null;
             }
         }
         return null;
