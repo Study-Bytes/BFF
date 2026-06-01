@@ -113,6 +113,42 @@ Learning endpoints:
 - `GET /api/v1/learn/courses/{courseId}/items/{itemId}/submissions`
 - `GET /api/v1/learn/submissions/{submissionId}`
 
+## Aggregation Endpoints
+
+BFF contains several frontend-facing endpoints that combine data from multiple services instead of simply proxying one
+upstream response.
+
+`GET /api/v1/learn/my-courses` combines:
+- LearningService enrollment/progress data;
+- CourseService public course metadata;
+- CourseService teacher-owned course list for authored courses.
+
+`GET /api/v1/learn/courses/{courseId}` combines:
+- LearningService course progress and item completion state;
+- CourseService course structure, module metadata and item summaries.
+
+`GET /api/v1/learn/courses/{courseId}/items/{itemId}` combines:
+- LearningService item progress/navigation state;
+- CourseService internal item content;
+- CourseService public course metadata.
+
+`GET /api/v1/learn/courses/{courseId}/leaderboard` combines:
+- LearningService leaderboard rows;
+- UserService public profiles for `fullName` and `avatarUrl`.
+
+`POST /api/v1/me/avatar` combines:
+- BFF local avatar file storage;
+- UserService current user lookup;
+- UserService settings update.
+
+`POST /api/v1/auth/register-teacher-request` combines:
+- UserService user registration;
+- UserService settings update when profile fields are provided;
+- UserService teacher request creation.
+
+`GET /api/v1/i18n/default-locale` reads the current user from UserService when authenticated and falls back to the
+default locale when profile lookup is unavailable.
+
 `GET /api/v1/learn/my-courses` is an aggregation endpoint: BFF requests
 `GET /api/v1/learn/my-courses` from LearningService, then fetches course metadata for each returned `courseId` from
 CourseService public `GET /api/v1/courses/{courseId}`, and returns frontend-ready items:

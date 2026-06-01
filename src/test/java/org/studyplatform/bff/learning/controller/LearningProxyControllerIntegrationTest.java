@@ -4,11 +4,14 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -214,6 +217,90 @@ class LearningProxyControllerIntegrationTest {
         assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "POST,/api/v1/learn/courses/3/enroll,/api/v1/learn/courses/3/enroll,'{}','{}'",
+            "POST,/api/v1/learn/courses/3/items/4/run,/api/v1/learn/courses/3/items/4/run,'{\"sourceCode\":\"print(1)\",\"selectedOptionIds\":[]}',sourceCode",
+            "POST,/api/v1/learn/courses/3/items/4/submit,/api/v1/learn/courses/3/items/4/submit,'{\"sourceCode\":\"print(1)\",\"selectedOptionIds\":[]}',sourceCode",
+            "POST,/api/v1/learn/courses/3/items/4/complete,/api/v1/learn/courses/3/items/4/complete,'{}','{}'",
+            "GET,/api/v1/learn/courses/3/items/4/submissions,/api/v1/learn/courses/3/items/4/submissions,'',''",
+            "GET,/api/v1/learn/submissions/500,/api/v1/learn/submissions/500,'',''"
+    })
+    void transparentLearnEndpointsForwardAuthorizationAndBody(
+            String method,
+            String route,
+            String expectedPath,
+            String body,
+            String expectedBodySnippet
+    ) {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpMethod httpMethod = HttpMethod.valueOf(method);
+        HttpEntity<String> entity = httpMethod == HttpMethod.GET
+                ? new HttpEntity<>(headers)
+                : new HttpEntity<>(body, headers);
+
+        ResponseEntity<String> response = restTemplate.exchange(route, httpMethod, entity, String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo(method);
+        assertThat(lastRequest().path()).isEqualTo(expectedPath);
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+        if (!expectedBodySnippet.isBlank()) {
+            assertThat(lastRequest().body()).contains(expectedBodySnippet);
+        }
+    }
+
+    @Test
+    void quizSubmitForwardsSelectedOptionIdsWithoutRequiringSourceCode() {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/learn/courses/3/items/8/submit",
+                HttpMethod.POST,
+                new HttpEntity<>("{\"selectedOptionIds\":[101,102]}", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"testKey\":\"quiz-answer\"");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/items/8/submit");
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+        assertThat(lastRequest().body()).contains("\"selectedOptionIds\":[101,102]");
+        assertThat(lastRequest().body()).doesNotContain("sourceCode");
+        assertThat(lastRequest().body()).doesNotContain("\"sql\"");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "/api/v1/learn/courses/3/items/6/submit,'{\"selectedOptionIds\":[999]}',422,Selected quiz option does not belong to item",
+            "/api/v1/learn/courses/3/items/6/submit,'{\"selectedOptionIds\":[]}',422,At least one quiz option must be selected",
+            "/api/v1/learn/courses/9/items/6/submit,'{\"selectedOptionIds\":[101]}',403,User is not enrolled in course"
+    })
+    void quizSubmitPreservesLearningServiceErrors(String route, String payload, int expectedStatus, String expectedMessage) {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                route,
+                HttpMethod.POST,
+                new HttpEntity<>(payload, headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode().value()).isEqualTo(expectedStatus);
+        assertThat(response.getBody()).contains(expectedMessage);
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+        assertThat(lastRequest().body()).contains("selectedOptionIds");
+    }
+
     @Test
     void learnModuleDeadlineStateEndpointForwardsQueryAndAuthorizationToLearningService() {
         capturedRequests.clear();
@@ -234,6 +321,27 @@ class LearningProxyControllerIntegrationTest {
         assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/modules/10/deadline-state");
         assertThat(lastRequest().query()).isEqualTo("deadlineAt=2026-06-01T23:59:00");
         assertThat(lastRequest().authorization()).isEqualTo("Bearer student-token");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "2026-06-01T23%3A59%3A00,deadlineAt=2026-06-01T23:59:00",
+            "2026-06-02T10%3A15%3A00,deadlineAt=2026-06-02T10:15:00"
+    })
+    void deadlineStateEndpointForwardsDifferentDeadlineQueries(String encodedDeadlineAt, String expectedQuery) {
+        capturedRequests.clear();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("student-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                URI.create("/api/v1/learn/courses/3/modules/10/deadline-state?deadlineAt=" + encodedDeadlineAt),
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/learn/courses/3/modules/10/deadline-state");
     }
 
     @Test
@@ -491,6 +599,22 @@ class LearningProxyControllerIntegrationTest {
         assertThat(capturedRequests).anySatisfy(req -> assertThat(req.path()).isEqualTo("/api/v1/courses/1"));
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "/api/v1/learn/my-courses",
+            "/api/v1/learn/courses/1",
+            "/api/v1/learn/courses/1/items/100",
+            "/api/v1/learn/courses/3/leaderboard"
+    })
+    void aggregatedLearnEndpointsRequireAuthentication(String route) {
+        capturedRequests.clear();
+
+        ResponseEntity<String> response = restTemplate.getForEntity(route, String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(capturedRequests).isEmpty();
+    }
+
     private static void startUpstream() throws IOException {
         if (upstream != null) {
             return;
@@ -525,6 +649,17 @@ class LearningProxyControllerIntegrationTest {
             response = "{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"stdout\":\"3\\n\",\"stderr\":null,\"testResults\":[{\"testKey\":\"sample-1\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":\"3\",\"message\":null,\"durationMs\":25,\"memoryMb\":32}],\"createdAt\":\"2026-05-16T12:00:00Z\"}";
         } else if ("/api/v1/learn/courses/3/items/4/submit".equals(path)) {
             response = "{\"id\":500,\"itemId\":4,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":2,\"totalTests\":2,\"stdout\":\"3\\n\",\"stderr\":null,\"testResults\":[{\"testKey\":\"sample-1\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":\"3\",\"message\":null,\"durationMs\":25,\"memoryMb\":32},{\"testKey\":\"hidden-1\",\"visibility\":\"HIDDEN\",\"passed\":true,\"actualOutput\":\"42\",\"message\":null,\"durationMs\":31,\"memoryMb\":35}],\"createdAt\":\"2026-05-16T12:00:00Z\"}";
+        } else if ("/api/v1/learn/courses/3/items/8/submit".equals(path)) {
+            response = "{\"id\":501,\"itemId\":8,\"status\":\"ACCEPTED\",\"score\":100,\"passedTests\":1,\"totalTests\":1,\"stdout\":null,\"stderr\":null,\"testResults\":[{\"testKey\":\"quiz-answer\",\"visibility\":\"OPEN\",\"passed\":true,\"actualOutput\":null,\"message\":null,\"durationMs\":null,\"memoryMb\":null}],\"createdAt\":\"2026-05-29T18:30:00\"}";
+        } else if ("/api/v1/learn/courses/3/items/6/submit".equals(path) && body.contains("[999]")) {
+            status = 422;
+            response = "{\"timestamp\":\"2026-05-29T18:30:00\",\"status\":422,\"error\":\"Unprocessable Entity\",\"message\":\"Selected quiz option does not belong to item\",\"path\":\"/api/v1/learn/courses/3/items/6/submit\"}";
+        } else if ("/api/v1/learn/courses/3/items/6/submit".equals(path) && body.contains("[]")) {
+            status = 422;
+            response = "{\"timestamp\":\"2026-05-29T18:30:00\",\"status\":422,\"error\":\"Unprocessable Entity\",\"message\":\"At least one quiz option must be selected\",\"path\":\"/api/v1/learn/courses/3/items/6/submit\"}";
+        } else if ("/api/v1/learn/courses/9/items/6/submit".equals(path)) {
+            status = 403;
+            response = "{\"timestamp\":\"2026-05-29T18:30:00\",\"status\":403,\"error\":\"Forbidden\",\"message\":\"User is not enrolled in course\",\"path\":\"/api/v1/learn/courses/9/items/6/submit\"}";
         } else if ("/api/v1/learn/courses/3/items/5/run".equals(path) && body.contains("trigger-400")) {
             status = 400;
             response = "{\"timestamp\":\"2026-05-18T21:49:28\",\"status\":400,\"error\":\"Bad Request\",\"message\":\"Некорректное тело запроса\",\"path\":\"/api/v1/learn/courses/3/items/5/run\"}";

@@ -107,7 +107,6 @@ public class AvatarStorageService {
         try {
             Files.deleteIfExists(storageDirectory.resolve(fileName).normalize());
         } catch (IOException ignored) {
-            // Best-effort cleanup. The new avatar URL is already persisted independently.
         }
     }
 

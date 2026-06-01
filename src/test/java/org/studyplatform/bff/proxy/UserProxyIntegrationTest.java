@@ -6,6 +6,8 @@ import org.springframework.core.io.ByteArrayResource;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -145,6 +147,29 @@ class UserProxyIntegrationTest {
         assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "PUT,/api/v1/me/profile,/api/v1/users/me/profile",
+            "PUT,/api/v1/me/password,/api/v1/users/me/password"
+    })
+    void currentUserWriteRoutesMapToUserService(String method, String route, String expectedPath) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                route,
+                HttpMethod.valueOf(method),
+                new HttpEntity<>("{\"value\":\"updated\"}", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo(method);
+        assertThat(lastRequest().path()).isEqualTo(expectedPath);
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
+    }
+
     @Test
     void meSettingsRouteMapsToUsersMeSettings() {
         HttpHeaders headers = new HttpHeaders();
@@ -221,6 +246,33 @@ class UserProxyIntegrationTest {
         assertThat(lastRequest().method()).isEqualTo("PUT");
         assertThat(lastRequest().body()).contains("\"avatarUrl\":\"http://localhost:");
         assertThat(lastRequest().body()).contains("/api/v1/avatar-files/");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "avatar.png,image/png",
+            "avatar.jpg,image/jpeg",
+            "avatar.webp,image/webp",
+            "avatar.gif,image/gif"
+    })
+    void avatarUploadAcceptsSupportedImageTypes(String fileName, String contentType) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/me/avatar",
+                HttpMethod.POST,
+                new HttpEntity<>(multipartFile(fileName, contentType, new byte[]{1, 2, 3}), headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("/api/v1/avatar-files/");
+        assertThat(capturedRequests).hasSize(2);
+        assertThat(capturedRequests.get(0).path()).isEqualTo("/api/v1/users/me");
+        assertThat(lastRequest().path()).isEqualTo("/api/v1/users/me/settings");
+        assertThat(lastRequest().body()).contains("\"avatarUrl\":\"http://localhost:");
     }
 
     @Test
@@ -387,6 +439,37 @@ class UserProxyIntegrationTest {
         assertThat(lastRequest().body()).contains("\"createdByUserId\":2");
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "GET,/api/v1/teacher/courses/101,/api/v1/admin/courses/101",
+            "PUT,/api/v1/teacher/courses/101,/api/v1/admin/courses/101",
+            "POST,/api/v1/teacher/courses/101/publish,/api/v1/admin/courses/101/publish",
+            "POST,/api/v1/teacher/courses/101/archive,/api/v1/admin/courses/101/archive",
+            "POST,/api/v1/teacher/courses/101/submit-for-review,/api/v1/admin/courses/101/submit-for-review",
+            "POST,/api/v1/teacher/courses/101/modules,/api/v1/admin/courses/101/modules",
+            "PUT,/api/v1/teacher/courses/101/modules/reorder,/api/v1/admin/courses/101/modules/reorder",
+            "PUT,/api/v1/teacher/modules/10,/api/v1/admin/modules/10",
+            "DELETE,/api/v1/teacher/modules/10,/api/v1/admin/modules/10",
+            "PUT,/api/v1/teacher/modules/10/items/reorder,/api/v1/admin/modules/10/items/reorder"
+    })
+    void teacherCourseRoutesMapToCourseServiceAdminRoutes(String method, String route, String expectedPath) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                route,
+                HttpMethod.valueOf(method),
+                new HttpEntity<>("{\"title\":\"Updated\"}", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo(method);
+        assertThat(lastRequest().path()).isEqualTo(expectedPath);
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
+    }
+
     @Test
     void teacherCourseProxyPrefersAccessCookieWhenAuthorizationIsNotJwt() {
         HttpHeaders headers = new HttpHeaders();
@@ -439,6 +522,30 @@ class UserProxyIntegrationTest {
         assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
         assertThat(lastRequest().body()).contains("\"contentBlocks\":[");
         assertThat(lastRequest().body()).contains("\"type\":\"TEXT\"");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "GET,/api/v1/teacher/items/42,/api/v1/admin/course-items/42",
+            "PUT,/api/v1/teacher/items/42,/api/v1/admin/course-items/42",
+            "DELETE,/api/v1/teacher/items/42,/api/v1/admin/course-items/42"
+    })
+    void teacherItemCrudRoutesMapToAdminCourseItems(String method, String route, String expectedPath) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth("access-token");
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                route,
+                HttpMethod.valueOf(method),
+                new HttpEntity<>("{\"title\":\"Updated item\"}", headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(lastRequest().method()).isEqualTo(method);
+        assertThat(lastRequest().path()).isEqualTo(expectedPath);
+        assertThat(lastRequest().authorization()).isEqualTo("Bearer access-token");
     }
 
     @Test
@@ -553,6 +660,32 @@ class UserProxyIntegrationTest {
         assertThat(fallback.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(fallback.getBody()).contains("\"locale\":\"ru\"");
         assertThat(fallback.getBody()).contains("\"source\":\"FALLBACK\"");
+    }
+
+    @ParameterizedTest
+    @CsvSource(value = {
+            "en-US,en;q=0.9|en|ACCEPT_LANGUAGE",
+            "ru-RU,ru;q=0.9|ru|ACCEPT_LANGUAGE",
+            "de-DE,de;q=0.9|ru|FALLBACK"
+    }, delimiter = '|')
+    void defaultLocaleResolvesFromAcceptLanguageVariants(
+            String acceptLanguage,
+            String expectedLocale,
+            String expectedSource
+    ) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.ACCEPT_LANGUAGE, acceptLanguage);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/i18n/default-locale",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"locale\":\"" + expectedLocale + "\"");
+        assertThat(response.getBody()).contains("\"source\":\"" + expectedSource + "\"");
     }
 
     @Test
