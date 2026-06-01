@@ -141,7 +141,6 @@ public class LearningMyCoursesController {
                 mergedItems.add(merged);
                 addedCourseIds.add(courseId);
             } catch (Exception ignored) {
-                // Skip broken item and continue with the rest.
             }
         }
 
@@ -545,7 +544,6 @@ public class LearningMyCoursesController {
                 result.put("progressPercent", Double.parseDouble(progress.asText()));
                 return;
             } catch (NumberFormatException ignored) {
-                // Fall through to default value.
             }
         }
         result.put("progressPercent", 0);
@@ -656,7 +654,6 @@ public class LearningMyCoursesController {
                 addedCourseIds.add(courseId);
             }
         } catch (Exception ignored) {
-            // Teacher course enrichment is best-effort and must not break enrolled courses.
         }
     }
 

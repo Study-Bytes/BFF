@@ -153,7 +153,6 @@ public class AuthProxyController {
             try {
                 userNodeForResponse = objectMapper.readTree(settingsResponse.getBody());
             } catch (IOException ignored) {
-                // Keep user from register response as fallback.
             }
         }
 
